@@ -138,6 +138,9 @@ jobs:
       - name: Build, lint, typecheck, and test
         run: pnpm turbo run build lint typecheck test ${TURBO_FILTERS}
 
+      - name: Test fixture generator
+        run: pnpm fixtures:test
+
   # ── Generated contract types ──────────────────────────────────────────────
   #
   # packages/core/src/generated/contract-types.ts and

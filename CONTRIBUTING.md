@@ -161,7 +161,13 @@ suites assert against that same file:
 ```bash
 pnpm fixtures:generate   # regenerate from packages/core (the reference)
 pnpm fixtures:check      # fail if the committed file is stale
+pnpm fixtures:test       # test generation and --check in temporary directories
 ```
+
+The generator regression tests use Node's built-in test runner and the existing
+`tsx` dependency. They verify deterministic bytes and ordering, plus current,
+stale, and missing fixture checks without changing the committed fixture. They
+also run in the `Packages (TypeScript)` CI job.
 
 If you change either math implementation:
 
