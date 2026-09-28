@@ -124,25 +124,31 @@ best.score                 # '61.2500'
 
 ### How parity is enforced
 
-[`fixtures/determinism.json`](../fixtures/determinism.json) holds **643 cases**
+[`fixtures/determinism.json`](../fixtures/determinism.json) holds **643+ cases**
 — arithmetic, formatting, stroop conversions, bid scores, rankings, spend
 limits, and the inputs both implementations must reject. It is generated from
-the *TypeScript* implementation, which is the reference:
+the *TypeScript* implementation, which is the reference.
+
+For detailed documentation on the determinism guarantee, how to work with fixtures,
+and what to do when the check fails, see **[docs/determinism.md](../docs/determinism.md)**.
+
+Quick reference:
 
 ```bash
 pnpm fixtures:generate     # regenerate from packages/core
 pnpm fixtures:check        # fail if the committed file is stale
 ```
 
-Both suites assert against that same file:
+All three suites assert against that same file:
 
 | Suite | File |
 |-------|------|
 | vitest | [`packages/core/src/math/__tests__/determinism-fixtures.test.ts`](../packages/core/src/math/__tests__/determinism-fixtures.test.ts) |
 | pytest | [`tests/test_determinism.py`](tests/test_determinism.py) |
+| Rust | [`sdk/rust/tests/determinism.rs`](../sdk/rust/tests/determinism.rs) |
 
-If both pass, the two implementations are byte-identical for every case. If a
-change to either makes them diverge, one of the suites fails. Both run as
+If all pass, the three implementations are byte-identical for every case. If a
+change to any makes them diverge, one of the suites fails. All run as
 required CI checks.
 
 The comparison is **string equality**, not numeric closeness — `pytest.approx`

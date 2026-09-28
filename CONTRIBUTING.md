@@ -151,12 +151,17 @@ ruff check .
 mypy
 ```
 
-### Cross-language determinism (TS ↔ Python)
+### Cross-language determinism (TS ↔ Python ↔ Rust)
 
-`packages/core/src/math` and `python/src/stellaragent` must produce
+`packages/core/src/math`, `python/src/stellaragent`, and `sdk/rust/src/math` must produce
 **byte-identical** output. [`fixtures/determinism.json`](fixtures/determinism.json)
-holds 643 cases generated from the TypeScript implementation, and both test
-suites assert against that same file:
+holds 643+ cases generated from the TypeScript implementation, and all three test
+suites assert against that same file.
+
+For detailed documentation on the determinism guarantee, how to work with fixtures,
+and what to do when the check fails, see **[docs/determinism.md](docs/determinism.md)**.
+
+Quick reference:
 
 ```bash
 pnpm fixtures:generate   # regenerate from packages/core (the reference)
@@ -171,7 +176,7 @@ If you change either math implementation:
    it shows exactly which values moved.
 4. Run both suites and make the other language match.
 
-The `Determinism (TS ↔ Python)` CI job runs all three steps and is a required
+The `Determinism (TS ↔ Python ↔ Rust)` CI job runs all three steps and is a required
 check. Comparison is string equality, never numeric closeness — "close enough"
 is precisely what makes two machines disagree about a bid score.
 
