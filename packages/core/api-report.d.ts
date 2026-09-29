@@ -5,7 +5,7 @@
 
 import BigNumber from 'bignumber.js';
 export { default as BigNumber } from 'bignumber.js';
-import { Keypair, Account, Transaction, FeeBumpTransaction, SorobanRpc } from '@stellar/stellar-sdk';
+import { Keypair, Account, Transaction, FeeBumpTransaction, SorobanRpc, xdr } from '@stellar/stellar-sdk';
 
 /**
  * Deterministic fixed-point arithmetic for Stellar agent payment calculations.
@@ -2193,6 +2193,165 @@ declare function initTelemetry(config?: TelemetryConfig & {
 }): Promise<TelemetryContext>;
 
 /**
+ * Shared Soroban build/simulate/sign/submit pipeline.
+ *
+ * Agent authorization and transaction sequencing are intentionally separate:
+ * authorization entries are signed by `ctx.signer`, while an exclusive channel
+ * lease supplies the envelope source/signature. This lets one logical agent use
+ * many independent sequence streams without changing on-chain authorization.
+ */
+
+/**
+ * A bound reference to `StellarAgent`'s private `invokeContract` method —
+ * what every query/mutation helper calls through.
+ */
+type InvokeFn = (contractId: string, method: string, args: xdr.ScVal[], readOnly?: boolean) => Promise<{
+    value: unknown;
+    tx: TxResult;
+}>;
+
+/**
+ * Groth16 solvency proofs: point encoding, and the two `PaymentChannel`
+ * entrypoints that install a verifying key and check a proof against it.
+ *
+ * ## The wire format problem this module exists to solve
+ *
+ * Soroban and arkworks agree on the curve (BLS12-381) and disagree about
+ * almost everything else. arkworks' `CanonicalSerialize` emits
+ * little-endian, Montgomery-form bytes; Soroban follows the ZCash/IETF
+ * convention — **uncompressed**, **big-endian** coordinates, with three flag
+ * bits packed into the top of the first byte. Feeding arkworks' own bytes
+ * straight to `env.crypto().bls12_381()` would produce a different (or
+ * outright invalid) point, and the failure shows up as a `pairing_check` that
+ * returns `false` for a proof that is in fact valid — the worst kind of
+ * failure, because it is indistinguishable from a fraudulent proof.
+ *
+ * `zk/solvency_proof/src/soroban_encoding.rs` is the Rust side of this same
+ * conversion, and its tests assert against the known-answer G1 generator
+ * vector published in `soroban_sdk`'s own rustdoc. {@link SOROBAN_G1_GENERATOR}
+ * below is that same vector, and {@link G1_POINT_SIZE} /
+ * {@link G2_POINT_SIZE} are the same constants — keep the two in step.
+ *
+ * ## What the on-chain check actually asserts
+ *
+ * `PaymentChannel.verify_solvency_proof` folds the channel's **own** public
+ * `limit_per_period` and `total_spent` into the Groth16 public-input term
+ * and runs the pairing check. A valid proof therefore says: *some* ordering of
+ * undisclosed payments into spend-limit periods never exceeded the limit, and
+ * those payments sum to exactly the channel's recorded total. It says nothing
+ * about who was paid, when, or in how many transactions — see
+ * `docs/zk-solvency-design.md`.
+ *
+ * @module solvency
+ */
+
+/** Size of a BLS12-381 base-field element, in bytes. */
+declare const FP_SIZE = 48;
+/** Size of a compressed-free (uncompressed) G1 point: `be(X) || be(Y)`. */
+declare const G1_POINT_SIZE: number;
+/** Size of an Fp2 element: two base-field elements. */
+declare const FP2_SIZE: number;
+/** Size of an uncompressed G2 point: `be(X_c1) || be(X_c0) || be(Y_c1) || be(Y_c0)`. */
+declare const G2_POINT_SIZE: number;
+/** Size of a scalar field element, in bytes. */
+declare const FR_SIZE = 32;
+/** The `SolvencyVerifyingKey.gamma_abc_g1` length the contract enforces. */
+declare const SOLVENCY_PUBLIC_INPUTS = 2;
+declare const GAMMA_ABC_G1_SIZE: number;
+/**
+ * The known-answer BLS12-381 G1 generator, in Soroban's encoding.
+ *
+ * Lifted from `soroban_sdk::crypto::bls12_381`'s own rustdoc example for
+ * `g1_add(zero, one)`. If this constant ever stops decoding to a well-formed
+ * point, the SDK and the Rust crate have diverged and every proof the SDK
+ * submits will be rejected on-chain for a reason that looks like a bad proof.
+ */
+declare const SOROBAN_G1_GENERATOR: string;
+/** An uncompressed BLS12-381 G1 point, 96 bytes, as `BytesN<96>` reaches the wire. */
+type SolvencyG1Point = Uint8Array;
+/** An uncompressed BLS12-381 G2 point, 192 bytes. */
+type SolvencyG2Point = Uint8Array;
+/**
+ * A Groth16 verifying key for the solvency circuit, in the same shape
+ * `PaymentChannel.SolvencyVerifyingKey` decodes to.
+ *
+ * `gammaAbcG1` must hold exactly {@link GAMMA_ABC_G1_SIZE} points: the constant
+ * term, then one per public input in circuit order (`limitPerPeriod`, then
+ * `totalSpent`). The contract rejects any other length, so this is checked
+ * here too — a bad key is otherwise only discoverable by spending a
+ * transaction on a revert.
+ */
+interface SolvencyVerifyingKey {
+    alphaG1: SolvencyG1Point;
+    betaG2: SolvencyG2Point;
+    gammaG2: SolvencyG2Point;
+    deltaG2: SolvencyG2Point;
+    gammaAbcG1: SolvencyG1Point[];
+}
+/** A Groth16 proof for the solvency circuit. */
+interface SolvencyProof {
+    a: SolvencyG1Point;
+    b: SolvencyG2Point;
+    c: SolvencyG1Point;
+}
+/** Validate a G1 point and return its bytes. */
+declare function toSolvencyG1(value: Uint8Array | string, name?: string): SolvencyG1Point;
+/** Validate a G2 point and return its bytes. */
+declare function toSolvencyG2(value: Uint8Array | string, name?: string): SolvencyG2Point;
+/** The BLS12-381 G1 generator, as the SDK encodes it. Useful as a test vector. */
+declare function g1Generator(): SolvencyG1Point;
+/** The G1 point at infinity, as the SDK encodes it. */
+declare function g1Infinity(): SolvencyG1Point;
+/** Encode a verifying key as the `SolvencyVerifyingKey` contract struct. */
+declare function solvencyVerifyingKeyVal(vk: SolvencyVerifyingKey): xdr.ScVal;
+/** Encode a proof as the `SolvencyProof` contract struct. */
+declare function solvencyProofVal(proof: SolvencyProof): xdr.ScVal;
+/**
+ * Install (or rotate) the Groth16 verifying key used by
+ * `PaymentChannel.verify_solvency_proof`.
+ *
+ * Admin-only, and the **first** caller to set a key becomes the admin for
+ * every future rotation — mirroring `set_circuit_breaker`. A key set by
+ * someone who is not the recorded admin reverts, and so does one whose
+ * `gamma_abc_g1` is not exactly {@link GAMMA_ABC_G1_SIZE} long.
+ */
+declare function setSolvencyVk(invoke: InvokeFn, paymentChannel: string, address: string, vk: SolvencyVerifyingKey): Promise<TxResult>;
+/**
+ * Verify a Groth16 solvency proof against a channel's own
+ * `limit_per_period` and `total_spent`.
+ *
+ * Read-only, and returns `false` rather than throwing for a proof that does
+ * not verify — an invalid proof is the expected answer, not an error. It still
+ * *throws* when no verifying key has been configured, because that is a
+ * deployment gap rather than a statement about the proof.
+ */
+declare function verifySolvencyProof(invoke: InvokeFn, paymentChannel: string, channelId: bigint, proof: SolvencyProof): Promise<boolean>;
+
+/**
+ * A Groth16 verifying key for the solvency circuit (see
+ * `zk/solvency_proof`), encoded as native BLS12-381 points so it can be
+ * checked on-chain via `env.crypto().bls12_381().pairing_check`.
+ * `gamma_abc_g1` must have exactly 3 entries: the constant term followed
+ * by one entry per public input (`limit_per_period`, `total_spent`, in
+ * that order), per the circuit's declared public inputs.
+ */
+interface RawSolvencyVerifyingKey {
+    alpha_g1: Uint8Array;
+    beta_g2: Uint8Array;
+    delta_g2: Uint8Array;
+    gamma_abc_g1: Uint8Array[];
+    gamma_g2: Uint8Array;
+}
+declare function decodeSolvencyVerifyingKey(value: unknown): RawSolvencyVerifyingKey;
+/** A Groth16 proof for the solvency circuit. */
+interface RawSolvencyProof {
+    a: Uint8Array;
+    b: Uint8Array;
+    c: Uint8Array;
+}
+declare function decodeSolvencyProof(value: unknown): RawSolvencyProof;
+
+/**
  * Main SDK class for AI Agent payment operations on Stellar.
  *
  * @example
@@ -2409,6 +2568,54 @@ declare class StellarAgent {
      * estimate. See `ledgerTime.ts` for the derivation and its caveats.
      */
     getLedgerCloseEstimate(): Promise<LedgerCloseEstimate>;
+    /**
+     * Install (or rotate) the Groth16 verifying key that
+     * {@link StellarAgent.verifySolvencyProof} checks proofs against.
+     *
+     * Admin-only: the **first** caller to set a key becomes the admin for every
+     * future rotation, mirroring `setCircuitBreaker`. Rotating the key is
+     * therefore a one-way door unless the channel is redeployed — set it from
+     * the same key you would want to trust in six months.
+     *
+     * @example
+     * ```typescript
+     * // From the prover's output — see zk/solvency_proof.
+     * await agent.setSolvencyVk({
+     *   alphaG1: vk.alphaG1,     // 96 bytes
+     *   betaG2: vk.betaG2,       // 192 bytes
+     *   gammaG2: vk.gammaG2,     // 192 bytes
+     *   deltaG2: vk.deltaG2,     // 192 bytes
+     *   gammaAbcG1: vk.gammaAbcG1, // exactly 3 × 96 bytes
+     * });
+     * ```
+     *
+     * @throws {StellarAgentError} `INVALID_ARGUMENT` when a point is not a
+     *   96/192-byte Soroban-encoded BLS12-381 point, or when `gammaAbcG1` does
+     *   not hold exactly three entries.
+     */
+    setSolvencyVk(vk: SolvencyVerifyingKey): Promise<TxResult>;
+    /**
+     * Verify a Groth16 solvency proof for `channelId` (read-only).
+     *
+     * A valid proof says that *some* ordering of undisclosed payments into
+     * spend-limit periods never exceeded the channel's `limitPerPeriod`, and
+     * that those payments sum to exactly its `totalSpent` — a statement about
+     * the *existence* of a consistent history, not about which payments those
+     * were. See `docs/zk-solvency-design.md`.
+     *
+     * Returns `false` for a proof that does not verify; that is the expected
+     * answer, not an error. It throws only when no verifying key has been set
+     * on the contract yet — `setSolvencyVk` — which is a deployment gap rather
+     * than a property of the proof.
+     *
+     * @example
+     * ```typescript
+     * const ok = await agent.verifySolvencyProof(channelId, {
+     *   a: proof.a, b: proof.b, c: proof.c,
+     * });
+     * ```
+     */
+    verifySolvencyProof(channelId: bigint, proof: SolvencyProof): Promise<boolean>;
 }
 
-export { type AgentBid, type AgentEvent, type AgentInfo, type AmmHopQuote, type AmmPair, type AmmQuoteCallback, AmmRouteProvider, type AttestRankBidsOptions, type AttestedRanking, BPS_SCALE, type BidAttestation, type BidAttestationVerification, type BidWeights, type BlockReason, CONTRACT_KEYS, CallbackFeeStrategy, CallbackRouteProvider, type ChannelAccount, type ChannelAccountFactory, type ChannelAccountLease, ChannelAccountPool, type ChannelAccountPoolOptions, type ChannelInfo, type ChannelLeaseOutcome, ChannelPoolError, type ChannelPoolStats, type ChannelSpendState, CircuitBreaker, type CircuitBreakerOptions, type ContractAddresses, type ContractKey, ContractsNotDeployedError, DEFAULT_BID_WEIGHTS, DEFAULT_ROUTING_POLICY, DirectRouteProvider, FALLBACK_LEDGER_CLOSE_SECONDS, type FeeBumpConfig, type FeeCallback, type FeeContext, type FeeDistribution, type FeePercentile, type FeePhase, type FeeStats, type FeeStrategy, FixedFeeStrategy, InMemoryMetrics, InMemoryTracer, type JobInfo, type JobStatus, KeypairSigner, LEDGERS_PER_CHANNEL_PERIOD, type LeaseOptions, type LedgerCloseEstimate, type LedgerCloseSample, type Logger, MetricNames, type Metrics, MultiplierFeeStrategy, type Network, type NetworkConfig, type OpenChannelParams, type OracleReference, type OtelBridgeOptions, type PathPaymentCandidate, type PathPaymentQuoteCallback, type PayForAPIParams, type PaymentPrediction, type PaymentQuote, type PaymentQuoteRequest, type PaymentTraceRecord, type PredictPaymentOutcomeParams, type PublicAddress, type QuoteParams, RATE_LIMIT_LEDGERS_PER_DAY, RATE_LIMIT_LEDGERS_PER_HOUR, ROUTING_WEIGHT_SCALE, type RateLimitConfig, type RateLimitSpendState, type RateLimitStatus, RecentFeeStrategy, type RecentFeeStrategyOptions, type RecordedSpan, RedactingLogger, RemoteSigner, type RemoteSignerOptions, type RequestWorkParams, type RetryClassification, type RetryClassifier, type RouteDiscoveryFailure, type RouteDiscoveryOptions, type RouteDiscoveryResult, type RouteHop, RoutePlanner, type RoutePlannerOptions, type RoutePriceOracle, type RouteProvider, type RouteProviderContext, type RouteQuote, type RouteRequest, type RouteScoreBreakdown, type RouteUnavailableCode, RouteUnavailableError, type RouteVenue, type RoutingPolicy, SEMCONV_VERSION, STROOP_SCALE, type ScoredBid, type ScoredRoute, type ScorerKeyDirectory, type ScorerKeyRecord, SemConv, type Sep43Like, type SignAuthEntryOptions, type SignTransactionOptions, type Signer, SignerAdapter, SigningError, SpanNames, type SpendLimit, type SpendPeriod, type SpendReport, type SponsorRpc, SponsorService, type SponsorServiceOptions, type SponsoredAccountOptions, SponsoredChannelAccountFactory, SponsorshipError, type SponsorshipRecord, StellarAgent, type StellarAgentConfig, StellarAgentError, type StellarAgentErrorCode, StellarPathPaymentProvider, type SubmissionPipelineConfig, SubmissionQueue, SubmissionQueueError, type SubmissionQueueOptions, type SubmissionQueueStats, type SubmitOptions, type TelemetryConfig, type TelemetryContext, type Tracer, type TxResult, UNCONFIGURED_CONTRACTS, type VerifyBidAttestationOptions, activePaymentTraceCount, add, applyOracleReference, asFeeStrategy, asPublicAddress, assertDeployed, attachTransactionHash, attestRankBids, bn, canonicalRouteId, clamp, classifySubmissionError, clearPaymentTraceRegistry, createOtelBridge, createPaymentId, createTelemetry, discoverRoutes, div, envVarNames, eq, estimateLedgerCloseSeconds, estimateSecondsRemaining, fetchLedgerCloseEstimate, fmt, fromStroops, getPaymentTrace, getTelemetry, gt, gte, initTelemetry, isDeployedAddress, isPositive, isRouteEligible, isSigner, isWindowExpired, isWithinSpendLimit, isZero, ledgersRemainingInWindow, lookupPaymentIdByTxHash, lt, lte, index as math, mul, noopLogger, noopMetrics, noopTracer, normalizeRoute, pct, predictPaymentOutcome, rankBids, rankRoutes, redactForExport, registerPaymentTrace, remainingBudget, resolveContracts, scoreBid, scoreRoute, selectBestBid, selectRoute, sub, sumStrings, toStr, toStroops, validateRoutingPolicy, verifyBidAttestation };
+export { type AgentBid, type AgentEvent, type AgentInfo, type AmmHopQuote, type AmmPair, type AmmQuoteCallback, AmmRouteProvider, type AttestRankBidsOptions, type AttestedRanking, BPS_SCALE, type BidAttestation, type BidAttestationVerification, type BidWeights, type BlockReason, CONTRACT_KEYS, CallbackFeeStrategy, CallbackRouteProvider, type ChannelAccount, type ChannelAccountFactory, type ChannelAccountLease, ChannelAccountPool, type ChannelAccountPoolOptions, type ChannelInfo, type ChannelLeaseOutcome, ChannelPoolError, type ChannelPoolStats, type ChannelSpendState, CircuitBreaker, type CircuitBreakerOptions, type ContractAddresses, type ContractKey, ContractsNotDeployedError, DEFAULT_BID_WEIGHTS, DEFAULT_ROUTING_POLICY, DirectRouteProvider, FALLBACK_LEDGER_CLOSE_SECONDS, FP2_SIZE, FP_SIZE, FR_SIZE, type FeeBumpConfig, type FeeCallback, type FeeContext, type FeeDistribution, type FeePercentile, type FeePhase, type FeeStats, type FeeStrategy, FixedFeeStrategy, G1_POINT_SIZE, G2_POINT_SIZE, GAMMA_ABC_G1_SIZE, InMemoryMetrics, InMemoryTracer, type JobInfo, type JobStatus, KeypairSigner, LEDGERS_PER_CHANNEL_PERIOD, type LeaseOptions, type LedgerCloseEstimate, type LedgerCloseSample, type Logger, MetricNames, type Metrics, MultiplierFeeStrategy, type Network, type NetworkConfig, type OpenChannelParams, type OracleReference, type OtelBridgeOptions, type PathPaymentCandidate, type PathPaymentQuoteCallback, type PayForAPIParams, type PaymentPrediction, type PaymentQuote, type PaymentQuoteRequest, type PaymentTraceRecord, type PredictPaymentOutcomeParams, type PublicAddress, type QuoteParams, RATE_LIMIT_LEDGERS_PER_DAY, RATE_LIMIT_LEDGERS_PER_HOUR, ROUTING_WEIGHT_SCALE, type RateLimitConfig, type RateLimitSpendState, type RateLimitStatus, type RawSolvencyProof, type RawSolvencyVerifyingKey, RecentFeeStrategy, type RecentFeeStrategyOptions, type RecordedSpan, RedactingLogger, RemoteSigner, type RemoteSignerOptions, type RequestWorkParams, type RetryClassification, type RetryClassifier, type RouteDiscoveryFailure, type RouteDiscoveryOptions, type RouteDiscoveryResult, type RouteHop, RoutePlanner, type RoutePlannerOptions, type RoutePriceOracle, type RouteProvider, type RouteProviderContext, type RouteQuote, type RouteRequest, type RouteScoreBreakdown, type RouteUnavailableCode, RouteUnavailableError, type RouteVenue, type RoutingPolicy, SEMCONV_VERSION, SOLVENCY_PUBLIC_INPUTS, SOROBAN_G1_GENERATOR, STROOP_SCALE, type ScoredBid, type ScoredRoute, type ScorerKeyDirectory, type ScorerKeyRecord, SemConv, type Sep43Like, type SignAuthEntryOptions, type SignTransactionOptions, type Signer, SignerAdapter, SigningError, type SolvencyG1Point, type SolvencyG2Point, type SolvencyProof, type SolvencyVerifyingKey, SpanNames, type SpendLimit, type SpendPeriod, type SpendReport, type SponsorRpc, SponsorService, type SponsorServiceOptions, type SponsoredAccountOptions, SponsoredChannelAccountFactory, SponsorshipError, type SponsorshipRecord, StellarAgent, type StellarAgentConfig, StellarAgentError, type StellarAgentErrorCode, StellarPathPaymentProvider, type SubmissionPipelineConfig, SubmissionQueue, SubmissionQueueError, type SubmissionQueueOptions, type SubmissionQueueStats, type SubmitOptions, type TelemetryConfig, type TelemetryContext, type Tracer, type TxResult, UNCONFIGURED_CONTRACTS, type VerifyBidAttestationOptions, activePaymentTraceCount, add, applyOracleReference, asFeeStrategy, asPublicAddress, assertDeployed, attachTransactionHash, attestRankBids, bn, canonicalRouteId, clamp, classifySubmissionError, clearPaymentTraceRegistry, createOtelBridge, createPaymentId, createTelemetry, decodeSolvencyProof, decodeSolvencyVerifyingKey, discoverRoutes, div, envVarNames, eq, estimateLedgerCloseSeconds, estimateSecondsRemaining, fetchLedgerCloseEstimate, fmt, fromStroops, g1Generator, g1Infinity, getPaymentTrace, getTelemetry, gt, gte, initTelemetry, isDeployedAddress, isPositive, isRouteEligible, isSigner, isWindowExpired, isWithinSpendLimit, isZero, ledgersRemainingInWindow, lookupPaymentIdByTxHash, lt, lte, index as math, mul, noopLogger, noopMetrics, noopTracer, normalizeRoute, pct, predictPaymentOutcome, rankBids, rankRoutes, redactForExport, registerPaymentTrace, remainingBudget, resolveContracts, scoreBid, scoreRoute, selectBestBid, selectRoute, setSolvencyVk, solvencyProofVal, solvencyVerifyingKeyVal, sub, sumStrings, toSolvencyG1, toSolvencyG2, toStr, toStroops, validateRoutingPolicy, verifyBidAttestation, verifySolvencyProof };

@@ -1,22 +1,27 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bot, Plus, Power, Settings2, TrendingUp, Zap } from 'lucide-react';
+import { Bot, Plus, Power, Settings2, Zap } from 'lucide-react';
 
 import {
-  Card,
   Badge,
   StatusDot,
   AddressChip,
-  SectionHeader,
   ProgressBar,
 } from '../components/ui/index.js';
-import { MOCK_AGENTS, type Agent } from '../lib/mockData.js';
+import { PanelBoundary } from '../components/dashboard/PanelBoundary.js';
+import { useAgentDetail, useAgentsPanel } from '../lib/chain/panels.js';
+import type { Agent } from '../lib/chain/types.js';
+import { estimatedDuration } from '../lib/chain/views.js';
 import { pctNumber } from '../lib/deterministic-math.js';
 
 function AgentCard({ agent, onSelect }: { agent: Agent; onSelect: (a: Agent) => void }) {
   // Deterministic percentage calculation — bignumber.js, not native float division
   const hourPct = pctNumber(agent.spentThisHour, agent.limitPerHour);
   const dayPct = pctNumber(agent.spentToday, agent.limitPerDay);
+  // The live rate-limit window, straight from `useRateLimitStatus`. The card's
+  // other numbers are the panel's own view of the chain state; this is the
+  // SDK's, including the measured ledger-close time behind the estimate.
+  const detail = useAgentDetail(agent.address);
 
   return (
     <motion.div
@@ -86,7 +91,23 @@ function AgentCard({ agent, onSelect }: { agent: Agent; onSelect: (a: Agent) => 
 
       {/* Footer */}
       <div className="flex items-center justify-between mt-4 pt-3 border-t border-sa-border">
-        <p className="text-[11px] text-sa-text-dim">Last active {agent.lastActive}</p>
+        <div className="min-w-0">
+          <p className="text-[11px] text-sa-text-dim">
+            Last active {agent.lastActive}
+          </p>
+          {detail.loading ? (
+            <p className="text-[10px] text-sa-muted">Checking spend limits…</p>
+          ) : detail.hourWindowSeconds === null ? (
+            <p className="text-[10px] text-sa-muted">No rate limit configured on-chain</p>
+          ) : (
+            <p
+              className="text-[10px] text-sa-muted"
+              title="Estimated from measured ledger close times, not a fixed five seconds"
+            >
+              Hourly limit resets in {estimatedDuration(detail.hourWindowSeconds)}
+            </p>
+          )}
+        </div>
         <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             className="w-7 h-7 rounded-md bg-sa-bg border border-sa-border hover:border-sa-accent/40 flex items-center justify-center transition-colors"
@@ -109,12 +130,24 @@ function AgentCard({ agent, onSelect }: { agent: Agent; onSelect: (a: Agent) => 
 }
 
 export function AgentsPage() {
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const panel = useAgentsPanel();
+  // The detail drawer is not built yet; the selection is kept so the wiring
+  // exists and the card click has somewhere to go.
+  const [, setSelectedAgent] = useState<Agent | null>(null);
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive' | 'warning'>('all');
 
-  const filtered = filter === 'all'
-    ? MOCK_AGENTS
-    : MOCK_AGENTS.filter((a) => a.status === filter);
+  const agents = useMemo(() => panel.data ?? [], [panel.data]);
+  const counts = useMemo(
+    () => ({
+      all: agents.length,
+      active: agents.filter((a) => a.status === 'active').length,
+      warning: agents.filter((a) => a.status === 'warning').length,
+      inactive: agents.filter((a) => a.status === 'inactive').length,
+    }),
+    [agents],
+  );
+
+  const filtered = filter === 'all' ? agents : agents.filter((a) => a.status === filter);
 
   return (
     <div className="flex-1 overflow-auto">
@@ -143,19 +176,28 @@ export function AgentsPage() {
                   : 'text-sa-text-dim hover:text-sa-text hover:bg-sa-surface border border-transparent'
               }`}
             >
-              {f === 'all' ? `All (${MOCK_AGENTS.length})` : f.charAt(0).toUpperCase() + f.slice(1)}
+              {f === 'all' ? `All (${counts.all})` : `${f.charAt(0).toUpperCase()}${f.slice(1)} (${counts[f]})`}
             </button>
           ))}
         </div>
 
         {/* Grid */}
-        <div className="grid grid-cols-2 gap-4">
-          <AnimatePresence mode="popLayout">
-            {filtered.map((agent) => (
-              <AgentCard key={agent.id} agent={agent} onSelect={setSelectedAgent} />
-            ))}
-          </AnimatePresence>
-        </div>
+        <PanelBoundary
+          panel={panel}
+          label="Agents"
+          emptyMessage="No agents in the roster yet. Add one to VITE_STELLARAGENT_AGENTS."
+          failures={panel.failures}
+        >
+          {() => (
+            <div className="grid grid-cols-2 gap-4">
+              <AnimatePresence mode="popLayout">
+                {filtered.map((agent) => (
+                  <AgentCard key={agent.id} agent={agent} onSelect={setSelectedAgent} />
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
+        </PanelBoundary>
 
         {/* New agent card */}
         <motion.div

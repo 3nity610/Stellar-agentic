@@ -9,6 +9,8 @@ Thank you for your interest in contributing! StellarAgent is an open-source proj
 - [Code of Conduct](#code-of-conduct)
 - [Project Structure](#project-structure)
 - [Development Setup](#development-setup)
+- [Testing](#testing)
+- [Dependency updates](#dependency-updates)
 - [How to Contribute](#how-to-contribute)
 - [Commit Convention](#commit-convention)
 - [Pull Request Process](#pull-request-process)
@@ -41,11 +43,50 @@ commands from the repo root, not from inside a package.
 
 ## Development Setup
 
+### One command first
+
+```bash
+./scripts/setup.sh            # check only — reports what is missing, installs nothing
+./scripts/setup.sh --install  # check, then add the wasm targets
+./scripts/setup.sh --ci       # check only, non-zero exit if anything is missing
+```
+
+It checks the whole toolchain — Node, pnpm, Rust with both wasm targets, the
+rustfmt/clippy components, Python, the Stellar CLI, and whether dependencies
+are installed — and prints the fix under each failure. Run it first; it turns
+four different "command not found" failures in four different tools into one
+list.
+
+The check that matters most is **`wasm32v1-none`**, the deployable target.
+Without it, `cargo build` fails with `can't find crate for 'core'`, which reads
+like a broken dependency tree rather than a missing `rustup target add`, and
+it is usually the first thing a newcomer hits. Note that
+`wasm32-unknown-unknown` is *not* a substitute: under Rust ≥ 1.82 it emits the
+`reference-types` feature, which soroban-sdk 22's VM rejects at upload — the
+build succeeds and the artifact is simply undeployable.
+
+### No devcontainer? No problem. Don't want to install anything?
+
+Open the repo in a devcontainer-capable editor. `.devcontainer/` pins Node 22,
+pnpm 9.15.9, Rust with both wasm targets, Python 3.11 and stellar-cli 25.1.0 —
+the same versions CI installs — and its `postCreateCommand` runs
+`scripts/setup.sh` before fetching the four dependency trees. You need nothing
+on your host but Docker.
+
+The versions here are duplicated in `scripts/setup.sh` and
+`.github/workflows/ci.yml`. If you change one, change all three in the same
+commit, or the devcontainer quietly stops being a faithful local mirror of CI.
+
 ### Prerequisites
 
+If you are installing by hand:
+
 - [Rust](https://rustup.rs/) 1.84+ with the `wasm32v1-none` target
-- [Stellar CLI](https://developers.stellar.org/docs/tools/stellar-cli)
-- Node.js 18+
+- [Stellar CLI](https://developers.stellar.org/docs/tools/stellar-cli) 25.1.0
+- Node.js 20+ (CI runs 22)
+- pnpm 9 (the exact version is pinned in `package.json`'s `packageManager`
+  field; `./scripts/pnpm <args>` runs it whatever is on your `PATH`)
+- Python 3.10+ (CI runs 3.10 – 3.13)
 - Git
 
 ### Setup
@@ -55,8 +96,8 @@ commands from the repo root, not from inside a package.
 git clone https://github.com/yourusername/stellaragent.git
 cd stellaragent
 
-# Install Rust wasm target
-rustup target add wasm32v1-none
+# Confirm the toolchain before anything else
+./scripts/setup.sh --install
 
 # Install every workspace package in one shot (pnpm, from the repo root)
 pnpm install
@@ -111,6 +152,61 @@ pnpm test:ui                            # interactive runner
 
 The specs live in [`dashboard/e2e/`](dashboard/e2e/) and run against a
 production `vite preview` build, so CI exercises the same bundle that ships.
+
+They run in **mock mode**, set once in
+[`playwright.config.ts`](dashboard/playwright.config.ts). That is not a
+shortcut around the wiring: mock mode swaps the `StellarAgent` underneath
+[`<StellarAgentProvider>`](packages/react/src/StellarAgentProvider.tsx), so
+every panel still goes through the same `@stellaragent/react` hooks, the same
+polling, and the same loading/empty/error branches it uses against a real
+network. The suite needs no deployed contracts and no indexer, and a green run
+is evidence the panels are wired — which the old fixture-import version could
+never be.
+
+### Where the dashboard's data comes from
+
+`src/lib/mockData.ts` used to back all four built pages directly, which made a
+page rendering fixtures indistinguishable from a page rendering chain state.
+The pages now read through `dashboard/src/lib/chain/`, and the fixtures moved
+one layer down, where a mock *agent* answers the same SDK methods a real one
+does.
+
+```text
+src/lib/chain/
+  config.ts         env + the explicit mock toggle; never throws
+  DashboardProvider one StellarAgent, live or mock, and the mode switch
+  readOnlySigner.ts a Signer with no key — the dashboard never signs
+  panels.ts         the panel hooks, built on @stellaragent/react
+  views.ts          chain state -> view models (pure, unit tested)
+  paymentFeed.ts    the indexer client
+```
+
+Copy [`dashboard/.env.example`](dashboard/.env.example) to `.env.local` to
+point it at a deployment. The short version:
+
+| Variable | Why |
+|----------|-----|
+| `VITE_STELLARAGENT_MODE` | `chain` (default) or `mock`. Nothing else. |
+| `VITE_STELLARAGENT_<NETWORK>_PAYMENT_CHANNEL`, `…_ESCROW` | The contracts the panels call. |
+| `VITE_STELLARAGENT_VIEWER_KEY` | A funded `G...` account to simulate against. **Not a secret** — read-only calls never sign, and a `S...` key in a `VITE_` variable is inlined into the bundle and served to every visitor. |
+| `VITE_STELLARAGENT_AGENTS` | The roster. The contracts are keyed by ID and have no "list every channel" query, so the dashboard cannot discover this. |
+| `VITE_STELLARAGENT_JOBS` | Escrow job ids to watch. |
+| `VITE_STELLARAGENT_INDEXER_URL` | `@stellaragent/indexer`'s query API — the payment feed's only source. |
+
+Two things worth knowing before you change any of it:
+
+- **Mock mode is never implicit.** It is `?mode=mock` on the URL, the switch
+  in the sidebar, or `VITE_STELLARAGENT_MODE=mock` at build time — in that
+  precedence order. With none of them, the dashboard reads the chain, and an
+  unconfigured one shows a checklist of what is missing rather than rows that
+  are not real.
+- **Every panel has four states**, rendered by
+  `components/dashboard/PanelBoundary.tsx`: `idle` (not configured — a
+  sentence, not a spinner), `loading` (`aria-busy`), `ready` (rows, or an
+  empty state that says what "empty" means here), and `error` (an alert with
+  the message and a retry). A panel that renders only `data.map(...)` shows
+  the same blank card for all three of the last three, and an operator cannot
+  tell "nothing has happened" from "I am not being told anything".
 
 ### Local-network integration tests
 
@@ -218,6 +314,52 @@ diff is reviewed. `scripts/generate-contract-types.ts` only covers the
 structs the SDKs actually decode today (`AgentInfo`, `Channel`, `Job`,
 `RateLimit`); add a contract there the day another one gains an SDK-facing
 struct.
+
+---
+
+## Dependency updates
+
+[`.github/dependabot.yml`](.github/dependabot.yml) opens PRs weekly (Mondays,
+07:00 UTC) against all four dependency graphs: the pnpm workspace, the four
+separate cargo workspaces (`contracts/`, `sdk/rust/`, `services/signer/`,
+`zk/`), `python/`, and every `uses:` in `.github/workflows/`. CI runs on those
+PRs like any other.
+
+This exists because of a specific, expensive class of problem: a day lost to
+`soroban-env-host` resolving an incompatible `ed25519-dalek`, from an unpinned
+cargo graph. Automated updates surface that in a PR with a diff and a CI run
+attached, rather than as a mystery in a release branch.
+
+### Triage expectation
+
+- **Within three working days**, either merge or comment. An unattended
+  Dependabot PR is indistinguishable from an abandoned one, and it blocks
+  every later bump of the same package.
+- **Patch bumps in a grouped PR** are a fast read: check the diff is confined
+  to the lockfile, then merge. A patch bump that changes a `package.json`
+  dependency *range* is not a patch bump — read it.
+- **Minor and major bumps are a normal PR, not a rubber stamp.** They arrive
+  ungrouped precisely so they are individually reviewable.
+- **Never merge a dependency PR with a red required check.** If CI is red
+  because of the bump, that is the update telling you something; the fix is a
+  follow-up commit in the same PR, not a close.
+
+### Bumps that are decisions, not chores
+
+These are in the config's `ignore` list on purpose. To take one anyway, remove
+the entry and say why in the PR description.
+
+| Package | Why it is pinned |
+|---------|------------------|
+| `bignumber.js` (npm) | `packages/core/src/math`, `packages/cli` and the dashboard's own `deterministic-math.ts` all route monetary arithmetic through it for cross-platform determinism. A minor bump is a numeric-behaviour change until `pnpm fixtures:check` and the determinism job say otherwise. |
+| `ed25519-dalek` 3.x (cargo, `contracts/` and `services/signer/`) | `soroban-env-host` declares `>=2.0.0` but does not compile against 3.x. Taking it is a broken build, not a build failure you can triage. |
+| `stellar-sdk` minor/major (pip) | The Python math modules must stay byte-identical with `packages/core/src/math` and `sdk/rust/src/math`. Read the bump against `fixtures/determinism.json` (see [Cross-language determinism](#cross-language-determinism-ts--python--rust)). |
+
+`contracts/Cargo.lock` and `services/signer/Cargo.lock` are committed on
+purpose — the deployable WASM and the artifact that holds the authority to move
+money must build from a dependency set someone reviewed, not from whatever
+crates.io published that morning. Dependabot PRs against them show exactly
+what moved.
 
 ---
 
