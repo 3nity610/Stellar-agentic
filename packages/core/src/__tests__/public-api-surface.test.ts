@@ -37,6 +37,7 @@ describe('StellarAgent', () => {
       'requestWork', 'acceptJob', 'submitResult', 'releasePayment', 'setRateLimits',
       'checkRateLimit', 'getBalance', 'getSpendReport', 'getChannel', 'getJob',
       'getRateLimitStatus', 'getLedgerCloseEstimate',
+      'setSolvencyVk', 'verifySolvencyProof',
       'getFleetStats', 'resizeChannelPool', 'shutdown',
     ] as const;
     for (const name of documentedMethods) {
