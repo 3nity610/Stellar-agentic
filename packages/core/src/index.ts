@@ -301,6 +301,54 @@ export type {
   RecordedSpan,
 } from './telemetry/index.js';
 
+// ─── Solvency proofs (Groth16 over BLS12-381) ─────────────────────────────────
+//
+// `PaymentChannel.set_solvency_vk` / `verify_solvency_proof` are on-chain
+// only until the SDK encodes the points for them. The encoding is not the
+// library default — arkworks and Soroban disagree about endianness and
+// Montgomery form — so it is hand-rolled here and cross-checked against
+// `soroban_sdk`'s own known-answer vector. See ./agent/solvency.ts.
+
+export {
+  setSolvencyVk,
+  verifySolvencyProof,
+  solvencyVerifyingKeyVal,
+  solvencyProofVal,
+  toSolvencyG1,
+  toSolvencyG2,
+  g1Generator,
+  g1Infinity,
+  FP_SIZE,
+  FP2_SIZE,
+  FR_SIZE,
+  G1_POINT_SIZE,
+  G2_POINT_SIZE,
+  SOLVENCY_PUBLIC_INPUTS,
+  GAMMA_ABC_G1_SIZE,
+  SOROBAN_G1_GENERATOR,
+} from './agent/solvency.js';
+export type {
+  SolvencyProof,
+  SolvencyVerifyingKey,
+  SolvencyG1Point,
+  SolvencyG2Point,
+} from './agent/solvency.js';
+
+// ─── Contract struct types (generated from contracts/specs/*.json) ───────────
+//
+// `SolvencyVerifyingKey` and `SolvencyProof` are in there too — the types
+// above are the ergonomic (camelCase, validated) view of the same shape the
+// generated decoders produce.
+
+export {
+  decodeSolvencyVerifyingKey,
+  decodeSolvencyProof,
+} from './generated/contract-types.js';
+export type {
+  RawSolvencyVerifyingKey,
+  RawSolvencyProof,
+} from './generated/contract-types.js';
+
 // ─── StellarAgent ─────────────────────────────────────────────────────────────
 //
 // The class itself lives under ./agent/, split into invocation, encoding,

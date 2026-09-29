@@ -29,6 +29,8 @@ const NAV_ITEMS = [
 ];
 
 export function Sidebar() {
+  const { config } = useDashboard();
+
   return (
     <aside className="w-60 shrink-0 flex flex-col bg-sa-surface border-r border-sa-border h-screen sticky top-0">
       {/* Logo */}
@@ -38,7 +40,9 @@ export function Sidebar() {
         </div>
         <div>
           <p className="font-display font-semibold text-sm text-sa-text">StellarAgent</p>
-          <p className="text-[10px] text-sa-text-dim font-mono">v0.1.0 · testnet</p>
+          <p className="text-[10px] text-sa-text-dim font-mono">
+            v0.1.0 · {config.mode === 'mock' ? 'demo' : config.network}
+          </p>
         </div>
       </div>
 

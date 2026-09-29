@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import { Sidebar } from './components/dashboard/Sidebar.js';
 import { OverviewPage } from './pages/OverviewPage.js';
 import { AgentsPage } from './pages/AgentsPage.js';
@@ -26,6 +26,12 @@ function PlaceholderPage({ title }: { title: string }) {
   );
 }
 
+/**
+ * The application shell.
+ *
+ * `DashboardAgentBoundary` is what decides whether there is an agent to read
+ * from; the pages below it can assume there is one, and never have to check.
+ */
 export function App() {
   return (
     <WalletProvider>

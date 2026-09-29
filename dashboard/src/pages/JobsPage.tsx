@@ -68,7 +68,7 @@ export function JobsPage() {
           </Card>
           <Card>
             <p className="label mb-2">Total Jobs</p>
-            <p className="font-display text-2xl font-semibold text-sa-text">{MOCK_JOBS.length}</p>
+            <p className="font-display text-2xl font-semibold text-sa-text">{jobs.length}</p>
             <p className="text-xs text-sa-text-dim mt-1">All time</p>
           </Card>
         </div>
@@ -76,54 +76,61 @@ export function JobsPage() {
         {/* Jobs list */}
         <Card>
           <SectionHeader title="All Jobs" />
-          <div className="space-y-3">
-            {MOCK_JOBS.map((job, i) => (
-              <motion.div
-                key={job.id}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.07 }}
-                className="border border-sa-border rounded-xl p-4 hover:border-sa-accent/30 transition-colors cursor-pointer"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <JobStatusBadge status={job.status} />
-                      <span className="text-xs text-sa-text-dim font-mono">#{job.id}</span>
-                    </div>
-                    <p className="text-sm text-sa-text font-medium mb-3 line-clamp-2">
-                      {job.task}
-                    </p>
-                    <div className="flex flex-wrap gap-4 text-xs text-sa-text-dim">
-                      <div>
-                        <span className="label">Requester </span>
-                        <span className="text-sa-text">{job.requesterName}</span>
-                        <span className="ml-1"><AddressChip address={job.requester} /></span>
+          <PanelBoundary
+            panel={panel}
+            label="Escrow jobs"
+            emptyMessage="No escrow jobs in the roster yet. Add job IDs to VITE_STELLARAGENT_JOBS."
+            failures={panel.failures}
+          >
+            {(rows) => (
+              <div className="space-y-3">
+                {rows.map((job, i) => (
+                  <motion.div
+                    key={job.id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.07 }}
+                    className="border border-sa-border rounded-xl p-4 hover:border-sa-accent/30 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2">
+                          <JobStatusBadge status={job.status} />
+                          <span className="text-xs text-sa-text-dim font-mono">#{job.id}</span>
+                        </div>
+                        <p className="text-sm text-sa-text font-medium mb-3 line-clamp-2">
+                          {job.task}
+                        </p>
+                        <div className="flex flex-wrap gap-4 text-xs text-sa-text-dim">
+                          <div>
+                            <span className="label">Requester </span>
+                            <span className="text-sa-text">{job.requesterName}</span>
+                            <span className="ml-1"><AddressChip address={job.requester} /></span>
+                          </div>
+                          <div>
+                            <span className="label">Worker </span>
+                            {job.workerName ? (
+                              <>
+                                <span className="text-sa-text">{job.workerName}</span>
+                                <span className="ml-1"><AddressChip address={job.worker!} /></span>
+                              </>
+                            ) : (
+                              <span className="text-sa-muted italic">Not yet assigned</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <span className="label">Worker </span>
-                        {job.workerName ? (
-                          <>
-                            <span className="text-sa-text">{job.workerName}</span>
-                            <span className="ml-1"><AddressChip address={job.worker!} /></span>
-                          </>
-                        ) : (
-                          <span className="text-sa-muted italic">Not yet assigned</span>
-                        )}
+                      <div className="text-right shrink-0">
+                        <p className="font-display text-xl font-semibold text-sa-green">
+                          ${job.amount}
+                        </p>
+                        <p className="text-xs text-sa-text-dim">{job.asset}</p>
+                        <div className="flex items-center gap-1 mt-2 justify-end text-xs text-sa-text-dim">
+                          <Clock size={10} />
+                          {job.deadline}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="font-display text-xl font-semibold text-sa-green">
-                      ${job.amount}
-                    </p>
-                    <p className="text-xs text-sa-text-dim">{job.asset}</p>
-                    <div className="flex items-center gap-1 mt-2 justify-end text-xs text-sa-text-dim">
-                      <Clock size={10} />
-                      {job.deadline}
-                    </div>
-                  </div>
-                </div>
 
                 {/* Actions */}
                 {job.status === 'pending_release' && (

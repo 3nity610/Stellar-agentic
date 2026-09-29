@@ -16,6 +16,8 @@ __all__ = [
     "RawAgentInfo",
     "RawSpendPeriod",
     "RawChannel",
+    "RawSolvencyVerifyingKey",
+    "RawSolvencyProof",
     "RawJobStatus",
     "RawJob",
     "RawRateLimit",
@@ -85,6 +87,29 @@ class RawChannel:
     # the voucher key separate from the on-chain identity means it can live in
     # a signing service and rotate independently.
     voucher_signer: bytes | None
+
+# ────────────────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class RawSolvencyVerifyingKey:
+    # A Groth16 verifying key for the solvency circuit (see
+    # `zk/solvency_proof`), encoded as native BLS12-381 points so it can be
+    # checked on-chain via `env.crypto().bls12_381().pairing_check`.
+    # `gamma_abc_g1` must have exactly 3 entries: the constant term followed
+    # by one entry per public input (`limit_per_period`, `total_spent`, in
+    # that order), per the circuit's declared public inputs.
+    alpha_g1: bytes
+    beta_g2: bytes
+    delta_g2: bytes
+    gamma_abc_g1: list[bytes]
+    gamma_g2: bytes
+
+# ────────────────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class RawSolvencyProof:
+    # A Groth16 proof for the solvency circuit.
+    a: bytes
+    b: bytes
+    c: bytes
 
 # ────────────────────────────────────────────────────────────────────────────
 RawJobStatus = Literal["open", "in_progress", "pending_release", "completed", "refunded", "disputed"]

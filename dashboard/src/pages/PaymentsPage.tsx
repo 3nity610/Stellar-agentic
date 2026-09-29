@@ -3,8 +3,10 @@ import { motion } from 'framer-motion';
 import { ArrowUpRight, CheckCircle2, XCircle, Clock, Route, ShieldCheck } from 'lucide-react';
 import type { PaymentQuote } from '@stellaragent/core';
 import { Badge, AddressChip, SectionHeader, Card } from '../components/ui/index.js';
-import { MOCK_PAYMENTS } from '../lib/mockData.js';
-import { sumAmounts, fmt } from '../lib/deterministic-math.js';
+import { PanelBoundary } from '../components/dashboard/PanelBoundary.js';
+import { usePaymentsPanel } from '../lib/chain/panels.js';
+import { useDashboard } from '../lib/chain/DashboardProvider.js';
+import { fmt, sumAmounts } from '../lib/deterministic-math.js';
 import {
   buildPaymentPreview,
   dashboardRouteCandidates,
@@ -35,11 +37,15 @@ export function PaymentsPage() {
   const [preview, setPreview] = useState<PaymentQuote | null>(null);
   const [previewError, setPreviewError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
-  const totalSuccess = MOCK_PAYMENTS.filter((p) => p.status === 'success').length;
-  const totalFailed = MOCK_PAYMENTS.filter((p) => p.status === 'failed').length;
+
+  const panel = usePaymentsPanel();
+  const { config } = useDashboard();
+  const payments = panel.data ?? [];
+  const totalSuccess = payments.filter((p) => p.status === 'success').length;
+  const totalFailed = payments.filter((p) => p.status === 'failed').length;
   // Deterministic sum: use bignumber.js to avoid float drift between ARM and x86
   const totalVolume = fmt(
-    sumAmounts(MOCK_PAYMENTS.filter((p) => p.status === 'success').map((p) => p.amount)),
+    sumAmounts(payments.filter((p) => p.status === 'success').map((p) => p.amount)),
     4,
   );
 
@@ -185,71 +191,101 @@ export function PaymentsPage() {
         {/* Table */}
         <Card>
           <SectionHeader title="Transaction Feed" subtitle="Most recent first" />
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-sa-border">
-                  {['Status', 'Agent', 'Endpoint', 'Amount', 'Recipient', 'Ledger', 'Time'].map((h) => (
-                    <th key={h} className="label text-left py-2.5 px-3 first:pl-0">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {MOCK_PAYMENTS.map((p, i) => (
-                  <motion.tr
-                    key={p.id}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: i * 0.04 }}
-                    className="border-b border-sa-border/50 hover:bg-sa-bg/40 transition-colors"
-                  >
-                    <td className="py-3 px-3 first:pl-0">
-                      <div className="flex items-center gap-2">
-                        {statusIcon(p.status)}
-                        {statusBadge(p.status)}
-                      </div>
-                    </td>
-                    <td className="py-3 px-3">
-                      <p className="text-sa-text font-medium text-xs">{p.agentName}</p>
-                    </td>
-                    <td className="py-3 px-3">
-                      <p className="font-mono text-xs text-sa-text-dim truncate max-w-[180px]">
-                        {p.endpoint}
-                      </p>
-                    </td>
-                    <td className="py-3 px-3">
-                      <p className={`font-mono text-sm font-medium ${
-                        p.status === 'failed' ? 'text-sa-red line-through' : 'text-sa-text'
-                      }`}>
-                        ${p.amount}
-                      </p>
-                    </td>
-                    <td className="py-3 px-3">
-                      <AddressChip address={p.recipient} />
-                    </td>
-                    <td className="py-3 px-3">
-                      <a
-                        href={`https://stellar.expert/explorer/testnet/tx/${p.ledger}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-mono text-xs text-sa-accent hover:underline flex items-center gap-1"
+          <PanelBoundary
+            panel={panel}
+            label="Payments"
+            emptyMessage={
+              config.indexerUrl
+                ? 'No channel payments have been indexed yet.'
+                : 'Set VITE_STELLARAGENT_INDEXER_URL to show the payment feed.'
+            }
+          >
+            {(rows) => (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-sa-border">
+                      {['Status', 'Agent', 'Endpoint', 'Amount', 'Recipient', 'Ledger', 'Time'].map((h) => (
+                        <th key={h} className="label text-left py-2.5 px-3 first:pl-0">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((p, i) => (
+                      <motion.tr
+                        key={p.id}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: i * 0.04 }}
+                        className="border-b border-sa-border/50 hover:bg-sa-bg/40 transition-colors"
                       >
-                        #{p.ledger}
-                        <ArrowUpRight size={10} />
-                      </a>
-                    </td>
-                    <td className="py-3 px-3">
-                      <p className="text-xs text-sa-text-dim">{p.timestamp}</p>
-                    </td>
-                  </motion.tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                        <td className="py-3 px-3 first:pl-0">
+                          <div className="flex items-center gap-2">
+                            {statusIcon(p.status)}
+                            {statusBadge(p.status)}
+                          </div>
+                        </td>
+                        <td className="py-3 px-3">
+                          <p className="text-sa-text font-medium text-xs">{p.agentName}</p>
+                        </td>
+                        <td className="py-3 px-3">
+                          <p className="font-mono text-xs text-sa-text-dim truncate max-w-[180px]">
+                            {p.endpoint}
+                          </p>
+                        </td>
+                        <td className="py-3 px-3">
+                          <p className={`font-mono text-sm font-medium ${
+                            p.status === 'failed' ? 'text-sa-red line-through' : 'text-sa-text'
+                          }`}>
+                            ${p.amount}
+                          </p>
+                        </td>
+                        <td className="py-3 px-3">
+                          <AddressChip address={p.recipient} />
+                        </td>
+                        <td className="py-3 px-3">
+                          <a
+                            href={explorerHref(config.network, p.txHash, p.ledger)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono text-xs text-sa-accent hover:underline flex items-center gap-1"
+                          >
+                            #{p.ledger}
+                            <ArrowUpRight size={10} />
+                          </a>
+                        </td>
+                        <td className="py-3 px-3">
+                          <p className="text-xs text-sa-text-dim">{p.timestamp}</p>
+                        </td>
+                      </motion.tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </PanelBoundary>
         </Card>
       </div>
     </div>
   );
+}
+
+/**
+ * Link to the transaction when the source gave us a hash, and to the ledger
+ * when it did not.
+ *
+ * A mock row has no hash, and a `#<ledger>` link that silently points at a
+ * ledger rather than a transaction is a small lie in the one place an operator
+ * would go to check something.
+ */
+function explorerHref(
+  network: string,
+  txHash: string | undefined,
+  ledger: number,
+): string {
+  const host = network === 'mainnet' ? 'mainnet' : 'testnet';
+  if (txHash) return `https://stellar.expert/explorer/${host}/tx/${txHash}`;
+  return `https://stellar.expert/explorer/${host}/ledger/${ledger}`;
 }
 
 function PreviewValue({ label, value }: { label: string; value: string }) {
