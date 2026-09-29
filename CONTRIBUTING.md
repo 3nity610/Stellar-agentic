@@ -435,6 +435,14 @@ If you're new to the project, start here:
 
 ---
 
+## Python SDK release checklist
+
+- [ ] Bump `version` in `python/pyproject.toml`
+- [ ] `cd python && pytest -q && mypy && ruff check ..`
+- [ ] `git tag sdk-python-v<version> && git push --tags`
+
+---
+
 ## Questions?
 
 Open a [GitHub Discussion](https://github.com/yourusername/stellaragent/discussions) or join our [Discord](https://discord.gg/stellaragent).

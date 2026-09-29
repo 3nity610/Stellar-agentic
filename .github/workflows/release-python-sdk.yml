@@ -1,0 +1,28 @@
+name: Release (Python SDK)
+
+on:
+  push:
+    tags:
+      - 'sdk-python-v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Verify and package without publishing'
+        type: boolean
+        default: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # trusted publishing (OIDC) — no long-lived token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pipx run build
+        working-directory: python
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        if: ${{ !inputs.dry_run }}
