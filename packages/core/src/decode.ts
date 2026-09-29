@@ -65,6 +65,26 @@ export function expectBytes(value: unknown, context: string): Uint8Array {
   );
 }
 
+/**
+ * Decodes a Soroban `Vec<T>` field, which `scValToNative` surfaces as a JS
+ * array. Each element goes through `decode`, so a `Vec<BytesN<96>>` — a
+ * `SolvencyVerifyingKey`'s `gamma_abc_g1`, say — fails at the offending
+ * element rather than handing the caller a `Uint8Array` of the wrong length.
+ */
+export function expectVec<T>(
+  value: unknown,
+  decode: (value: unknown) => T,
+  context: string,
+): T[] {
+  if (!Array.isArray(value)) {
+    throw new StellarAgentError(
+      'CONTRACT_ERROR',
+      `Contract returned a malformed ${context} (expected a Vec)`,
+    );
+  }
+  return value.map(decode);
+}
+
 /** Decodes a Soroban `Option<T>` field, which `scValToNative` surfaces as `null`/`undefined` when absent. */
 export function expectOptional<T>(value: unknown, decode: (value: unknown) => T): T | null {
   return value == null ? null : decode(value);

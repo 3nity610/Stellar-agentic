@@ -5,3 +5,9 @@ packages:
   - dashboard
 allowBuilds:
   esbuild: true
+  # packages/indexer stores its ledger in SQLite. Without the native build the
+  # install step exits non-zero (ERR_PNPM_IGNORED_BUILDS) and every
+  # indexer test fails on a missing better_sqlite3.node — which reads like a
+  # broken test suite rather than a missing opt-in.
+  better-sqlite3: true
+  protobufjs: true

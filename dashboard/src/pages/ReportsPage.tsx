@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   ArrowDownToLine,
   ArrowUpRight,
@@ -11,7 +11,7 @@ import {
   Send,
 } from 'lucide-react';
 import { AddressChip, Badge, Card, EmptyState, SectionHeader } from '../components/ui/index.js';
-import { MOCK_AGENTS } from '../lib/mockData.js';
+import { useAgentsPanel } from '../lib/chain/panels.js';
 import {
   ReportsApi,
   type DeliveryStatus,
@@ -168,8 +168,12 @@ function EvidencePanel({ line, onClose }: { line: StatementLine; onClose(): void
 }
 
 export function ReportsPage() {
+  const agentsPanel = useAgentsPanel();
   const [subjectKind, setSubjectKind] = useState<ReportSubjectKind>('agent');
-  const [subjectId, setSubjectId] = useState(MOCK_AGENTS[0].address);
+  // Prefilled from the first watched agent so a statement is one click away,
+  // but always the real roster's address — a default that silently points at
+  // a fixture account is how a report gets filed against the wrong subject.
+  const [subjectId, setSubjectId] = useState('');
   const [fromLedger, setFromLedger] = useState('');
   const [throughLedger, setThroughLedger] = useState('');
   const [format, setFormat] = useState<ReportFormat>('csv');
@@ -190,6 +194,14 @@ export function ReportsPage() {
   const [schedules, setSchedules] = useState<ReportSchedule[]>([]);
   const [deliveries, setDeliveries] = useState<ReportDelivery[]>([]);
   const [scheduleBusy, setScheduleBusy] = useState(false);
+
+  // Adopt the first agent the chain knows about, once, when the roster lands.
+  // A `useEffect` rather than derived state: the operator may have cleared or
+  // typed the field already, and a prefilled value must never overwrite that.
+  const firstAgent = agentsPanel.data?.[0]?.address;
+  useEffect(() => {
+    setSubjectId((current) => (current ? current : (firstAgent ?? '')));
+  }, [firstAgent]);
 
   const currentRequest = useMemo(() => {
     try {
