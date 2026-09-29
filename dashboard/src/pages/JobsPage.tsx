@@ -88,7 +88,7 @@ export function JobsPage() {
                             <span className="ml-1"><AddressChip address={job.worker!} /></span>
                           </>
                         ) : (
-                          <span className="text-sa-muted italic">Not yet assigned</span>
+                          <span className="text-sa-text-dim italic">Not yet assigned</span>
                         )}
                       </div>
                     </div>
