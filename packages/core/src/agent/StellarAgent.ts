@@ -23,6 +23,7 @@ import { resolveContracts, assertDeployed } from '../contracts.js';
 import { KeypairSigner, SigningError } from '../signer.js';
 import type { Signer } from '../signer.js';
 import type { LedgerCloseEstimate } from '../ledgerTime.js';
+import type { SolvencyProof, SolvencyVerifyingKey } from './solvency.js';
 import { initTelemetry } from '../telemetry/index.js';
 import type { TelemetryContext } from '../telemetry/index.js';
 import { asFeeStrategy, RecentFeeStrategy } from '../fleet/feeStrategy.js';
@@ -43,6 +44,7 @@ import { createNetworkClients, fundFromFriendbot } from './config.js';
 import { getLatestLedger, runInvocation } from './invocation.js';
 import * as queries from './queries.js';
 import * as mutations from './mutations.js';
+import * as solvency from './solvency.js';
 
 /**
  * Main SDK class for AI Agent payment operations on Stellar.
@@ -682,6 +684,75 @@ export class StellarAgent {
    */
   async getLedgerCloseEstimate(): Promise<LedgerCloseEstimate> {
     return queries.getLedgerCloseEstimate(this.networkConfig.horizonUrl);
+  }
+
+  // ── Solvency proofs (ZK) ─────────────────────────────────────────────────
+
+  /**
+   * Install (or rotate) the Groth16 verifying key that
+   * {@link StellarAgent.verifySolvencyProof} checks proofs against.
+   *
+   * Admin-only: the **first** caller to set a key becomes the admin for every
+   * future rotation, mirroring `setCircuitBreaker`. Rotating the key is
+   * therefore a one-way door unless the channel is redeployed — set it from
+   * the same key you would want to trust in six months.
+   *
+   * @example
+   * ```typescript
+   * // From the prover's output — see zk/solvency_proof.
+   * await agent.setSolvencyVk({
+   *   alphaG1: vk.alphaG1,     // 96 bytes
+   *   betaG2: vk.betaG2,       // 192 bytes
+   *   gammaG2: vk.gammaG2,     // 192 bytes
+   *   deltaG2: vk.deltaG2,     // 192 bytes
+   *   gammaAbcG1: vk.gammaAbcG1, // exactly 3 × 96 bytes
+   * });
+   * ```
+   *
+   * @throws {StellarAgentError} `INVALID_ARGUMENT` when a point is not a
+   *   96/192-byte Soroban-encoded BLS12-381 point, or when `gammaAbcG1` does
+   *   not hold exactly three entries.
+   */
+  async setSolvencyVk(vk: SolvencyVerifyingKey): Promise<TxResult> {
+    return solvency.setSolvencyVk(
+      this.invokeContract.bind(this),
+      this.contracts.paymentChannel,
+      this.address,
+      vk,
+    );
+  }
+
+  /**
+   * Verify a Groth16 solvency proof for `channelId` (read-only).
+   *
+   * A valid proof says that *some* ordering of undisclosed payments into
+   * spend-limit periods never exceeded the channel's `limitPerPeriod`, and
+   * that those payments sum to exactly its `totalSpent` — a statement about
+   * the *existence* of a consistent history, not about which payments those
+   * were. See `docs/zk-solvency-design.md`.
+   *
+   * Returns `false` for a proof that does not verify; that is the expected
+   * answer, not an error. It throws only when no verifying key has been set
+   * on the contract yet — `setSolvencyVk` — which is a deployment gap rather
+   * than a property of the proof.
+   *
+   * @example
+   * ```typescript
+   * const ok = await agent.verifySolvencyProof(channelId, {
+   *   a: proof.a, b: proof.b, c: proof.c,
+   * });
+   * ```
+   */
+  async verifySolvencyProof(
+    channelId: bigint,
+    proof: SolvencyProof,
+  ): Promise<boolean> {
+    return solvency.verifySolvencyProof(
+      this.invokeContract.bind(this),
+      this.contracts.paymentChannel,
+      channelId,
+      proof,
+    );
   }
 
   // ── Internals ────────────────────────────────────────────────────────────

@@ -84,6 +84,8 @@ const WANTED: WantedType[] = [
   { contract: 'agent_wallet_factory', kind: 'struct', name: 'AgentInfo' },
   { contract: 'payment_channel', kind: 'enum', name: 'SpendPeriod' },
   { contract: 'payment_channel', kind: 'struct', name: 'Channel' },
+  { contract: 'payment_channel', kind: 'struct', name: 'SolvencyVerifyingKey' },
+  { contract: 'payment_channel', kind: 'struct', name: 'SolvencyProof' },
   { contract: 'escrow', kind: 'enum', name: 'JobStatus' },
   { contract: 'escrow', kind: 'struct', name: 'Job' },
   { contract: 'rate_limiter', kind: 'struct', name: 'RateLimit' },
@@ -247,6 +249,17 @@ function mapType(type: SpecType): MappedType {
       pyType: 'bytes',
     };
   }
+  if ('vec' in type) {
+    const inner = mapType(type.vec.element_type);
+    // The element decoder is an arrow function, so its parameter shadows
+    // nothing — but its body is emitted before the outer call closes, which is
+    // why the inner `[]`-free type is safe to interpolate here.
+    return {
+      tsType: `${inner.tsType}[]`,
+      tsDecode: (expr, ctx) => `expectVec(${expr}, (item) => ${inner.tsDecode('item', ctx)}, '${ctx}')`,
+      pyType: `list[${inner.pyType}]`,
+    };
+  }
   if ('udt' in type) {
     const enumIR = enumsByName.get(type.udt.name);
     if (!enumIR) {
@@ -300,6 +313,7 @@ function emitTypeScript(): string {
     '  expectBool,',
     '  expectString,',
     '  expectBytes,',
+    '  expectVec,',
     '  expectOptional,',
     '  expectEnumTag,',
     "} from '../decode.js';",

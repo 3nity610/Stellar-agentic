@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#
+# Run the pnpm version this repo pins, whatever pnpm is on PATH.
+#
+# package.json sets `"packageManager": "pnpm@<version>"`, and CI honours that
+# through pnpm/action-setup. Locally, a global pnpm of a different major does
+# two unhelpful things: it either refuses to run ("ERR_PNPM_BAD_PM_VERSION") or
+# silently re-resolves the lockfile in its own format, which turns a one-line
+# change into a lockfile diff nobody meant to make.
+#
+#   1. If corepack is available, let it fetch and honour the pinned version.
+#   2. Otherwise fall back to whatever `pnpm` is on PATH.
+#
+# Used by scripts/setup.sh and by anything else that needs a predictable pnpm.
+
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+PINNED="$(node -e 'process.stdout.write(require("./package.json").packageManager || "")' 2>/dev/null)"
+PINNED="${PINNED#pnpm@}"
+PINNED="${PINNED%%+*}"   # strip the `+sha512...` integrity suffix
+
+if [ -n "$PINNED" ] && command -v corepack >/dev/null 2>&1; then
+  export COREPACK_ENABLE_AUTO_PIN=0
+  exec corepack pnpm "$@"
+fi
+
+exec pnpm "$@"

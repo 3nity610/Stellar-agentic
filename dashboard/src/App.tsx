@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import { Sidebar } from './components/dashboard/Sidebar.js';
 import { OverviewPage } from './pages/OverviewPage.js';
 import { AgentsPage } from './pages/AgentsPage.js';
@@ -7,6 +7,7 @@ import { ReportsPage } from './pages/ReportsPage.js';
 import { JobsPage } from './pages/JobsPage.js';
 import { AlertsPage } from './pages/AlertsPage.js';
 import { HealthPage } from './pages/HealthPage.js';
+import { DashboardAgentBoundary } from './lib/chain/DashboardProvider.js';
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -25,9 +26,15 @@ function PlaceholderPage({ title }: { title: string }) {
   );
 }
 
+/**
+ * The application shell.
+ *
+ * `DashboardAgentBoundary` is what decides whether there is an agent to read
+ * from; the pages below it can assume there is one, and never have to check.
+ */
 export function App() {
   return (
-    <BrowserRouter>
+    <DashboardAgentBoundary>
       <div className="flex min-h-screen bg-sa-bg bg-grid-pattern bg-grid">
         {/* Radial glow overlay */}
         <div className="fixed inset-0 bg-radial-glow pointer-events-none" />
@@ -48,6 +55,6 @@ export function App() {
           </Routes>
         </main>
       </div>
-    </BrowserRouter>
+    </DashboardAgentBoundary>
   );
 }
