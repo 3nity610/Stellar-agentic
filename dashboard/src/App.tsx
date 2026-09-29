@@ -39,7 +39,7 @@ export function App() {
         {/* Radial glow overlay */}
         <div className="fixed inset-0 bg-radial-glow pointer-events-none" />
 
-        <Sidebar />
+          <Sidebar />
 
         <main className="flex flex-1 overflow-hidden relative">
           <Routes>

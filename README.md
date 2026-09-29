@@ -229,6 +229,27 @@ It builds every WASM, deploys, initializes, cross-wires, and writes
 `deployments/testnet.json` plus a matching `.env` block. Full runbook:
 [docs/deployment.md](docs/deployment.md).
 
+### Solvency proofs (Rust)
+
+A `PaymentChannel` owner can prove, without revealing individual payments,
+that a private payment history is a valid explanation for the channel's
+public `limit_per_period` and `total_spent`. The `PaymentChannel` contract
+verifies that proof on-chain through Soroban's native BLS12-381
+`pairing_check` host function.
+
+```bash
+cd zk && cargo build --release --bin solvency-prover
+./target/release/solvency-prover setup --out-dir ./keys
+./target/release/solvency-prover prove --pk ./keys/pk.bin --history history.json \
+    --limit 500000 --total 750000 --out proof.json
+./target/release/solvency-prover verify --vk ./keys/vk.bin --proof proof.json
+```
+
+Step-by-step walkthrough, including the on-chain `set_solvency_vk` and
+`verify_solvency_proof` invocations and measured timings:
+**[docs/zk-solvency-walkthrough.md](docs/zk-solvency-walkthrough.md)**.
+Design and threat model: **[docs/zk-solvency-design.md](docs/zk-solvency-design.md)**.
+
 ### Dashboard
 
 ```bash
@@ -242,6 +263,22 @@ balance reconciliation, streams CSV/JSON Lines/IIF, drills to transaction
 proof, and administers schedules/dead letters. See the explicit proof limits,
 deployment, verification, and recovery guide in
 [docs/audit-trail.md](docs/audit-trail.md).
+
+The **Rate Limits** view reads live on-chain ceilings through the
+`useRateLimitStatus` hook: per-transaction, hourly, daily, and hourly
+transaction-count limits with exact headroom, an estimate of when each rolling
+window resets, and a local "would this payment go through?" check. It needs
+contract addresses at build time:
+
+```bash
+VITE_STELLAR_NETWORK=testnet \
+VITE_CONTRACT_RATE_LIMITER=C... \
+VITE_CONTRACT_PAYMENT_CHANNEL=C... \
+npm run build
+```
+
+Without them the page says so instead of showing zeros. See
+[dashboard/src/lib/agentRuntime.tsx](dashboard/src/lib/agentRuntime.tsx).
 
 ---
 
