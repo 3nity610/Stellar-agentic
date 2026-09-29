@@ -8,6 +8,7 @@ export {
 
 export { useChannel } from './hooks/useChannel.js';
 export { useJob } from './hooks/useJob.js';
+export { useJobs, type UseJobsFilters } from './hooks/useJobs.js';
 export {
   useRateLimitStatus,
   type UseRateLimitStatusOptions,

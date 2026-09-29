@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import {
   fromStroops,
   rankRoutes,
@@ -18,6 +19,7 @@ Usage:
   stellaragent <command> [options]
 
 Commands:
+  deploy               Build, deploy and cross-wire the contract set
   route preview       Validate and display a routed-payment quote before confirmation
   config path         Print the configuration file path
   config get <key>    Get configuration value
@@ -26,6 +28,8 @@ Commands:
   channel             Manage payment channels (open, top-up, status, close)
 
 Options:
+  --network <net>     Network to operate against
+  --json, -j          Emit machine-readable JSON on stdout
   --help, -h          Show this help
   --version, -v       Show version
 `;
@@ -44,6 +48,11 @@ const terminalIO: CliIO = {
 export async function runCli(args: readonly string[], io: CliIO = terminalIO): Promise<number> {
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     io.stdout(HELP);
+    return 0;
+  }
+
+  if (args.includes('--version') || args.includes('-v')) {
+    io.stdout('0.1.0');
     return 0;
   }
 
@@ -76,7 +85,7 @@ export async function runCli(args: readonly string[], io: CliIO = terminalIO): P
   if (command === 'config') {
     const sub = args[1];
     if (sub === 'path') {
-      io.stdout(getConfigPath());
+      io.stdout(args.includes('--json') ? formatJson({ path: getConfigPath() }) : getConfigPath());
       return 0;
     }
     if (sub === 'get') {
@@ -87,7 +96,7 @@ export async function runCli(args: readonly string[], io: CliIO = terminalIO): P
       }
       const cfg = await readConfigFile();
       const val = (cfg as Record<string, unknown>)[key];
-      io.stdout(typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val ?? ''));
+      io.stdout(args.includes('--json') ? formatJson({ [key]: val ?? null }) : (typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val ?? '')));
       return 0;
     }
     if (sub === 'set') {
@@ -143,9 +152,22 @@ export async function runCli(args: readonly string[], io: CliIO = terminalIO): P
     );
   }
 
+  // Deploy command — wraps the repo deployment script
+  if (command === 'deploy') {
+    const rest = args.slice(1);
+    if (rest.includes('--dry-run')) io.stdout('deploy: dry run, no contracts will be sent');
+    execFileSync('pnpm', ['exec', 'tsx', 'scripts/deploy.ts', ...rest], { stdio: 'inherit' });
+    return 0;
+  }
+
   io.stderr(`Unknown command: ${args.join(' ')}`);
   io.stderr(HELP);
   return 2;
+}
+
+/** Serialize any value for `--json` output. */
+export function formatJson(value: unknown): string {
+  return JSON.stringify(value, null, 2);
 }
 
 /** Human-readable preview shared by the command and tests. */
