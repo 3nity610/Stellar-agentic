@@ -1,5 +1,11 @@
 # ZK solvency proofs for PaymentChannel — design doc
 
+> Want the commands rather than the rationale? See
+> **[zk-solvency-walkthrough.md](zk-solvency-walkthrough.md)** — build the
+> prover, generate keys, produce a proof, and submit it through
+> `set_solvency_vk` / `verify_solvency_proof`, with real output and measured
+> timings.
+
 ## Problem
 
 `PaymentChannel` tracks `total_spent` and enforces `limit_per_period` in
@@ -289,9 +295,16 @@ compile-time dependency on arkworks).
 - `src/bin/prover.rs` — CLI (`solvency-prover setup|prove|verify`). Takes
   a JSON array of `{amount, period_index}` as the private history,
   outputs hex-encoded Soroban-format proof bytes ready to submit to
-  `verify_solvency_proof`.
+  `verify_solvency_proof`. The full operator guide, including the
+  on-chain submission, is
+  [zk-solvency-walkthrough.md](zk-solvency-walkthrough.md).
 
 ## Demo: it actually works, end to end
+
+> This section is the shape of the flow. The complete, copy-pasteable version
+> — with the on-chain `set_solvency_vk` and `verify_solvency_proof`
+> invocations, measured proof sizes, and a troubleshooting table — is in
+> [zk-solvency-walkthrough.md](zk-solvency-walkthrough.md).
 
 ```console
 $ ./target/release/solvency-prover setup --out-dir ./keys

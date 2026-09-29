@@ -85,9 +85,13 @@ async function main(): Promise<void> {
   const server = createQueryServer(store, {
     deliveryStore,
     corsOrigin: config.corsOrigin,
+    progress: () => indexer.progressReporter.snapshot(),
   });
   server.listen(config.port, () => {
     process.stdout.write(`Audit API listening on http://localhost:${config.port}\n`);
+    process.stdout.write(
+      `Scrape health at /health and Prometheus metrics at /metrics on port ${config.port}\n`,
+    );
   });
   const controller = new AbortController();
   const missingEmailGateway: EmailSender = {
