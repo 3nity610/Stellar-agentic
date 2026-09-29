@@ -14,6 +14,7 @@ import {
   FileBarChart,
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { WalletConnection } from './WalletConnection.js';
 
 const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'Overview' },
@@ -79,6 +80,11 @@ export function Sidebar() {
           ))}
         </ul>
       </nav>
+
+      {/* Wallet Connection */}
+      <div className="p-4 border-t border-sa-border">
+        <WalletConnection />
+      </div>
 
       {/* Footer */}
       <div className="p-4 border-t border-sa-border space-y-2">
