@@ -19,8 +19,8 @@
 //!    proposals and cannot be bypassed by any individual owner.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env,
-    FromVal, String, Symbol, Val, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, FromVal,
+    String, Symbol, Val, Vec,
 };
 
 #[contracterror]
@@ -118,14 +118,18 @@ impl GovernanceContract {
 
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().set(&DataKey::Owners, &owners);
-        env.storage().instance().set(&DataKey::Threshold, &threshold);
+        env.storage()
+            .instance()
+            .set(&DataKey::Threshold, &threshold);
         env.storage()
             .instance()
             .set(&DataKey::TimelockDelay, &timelock_delay_ledgers);
         env.storage()
             .instance()
             .set(&DataKey::ProposalTtl, &proposal_ttl_ledgers);
-        env.storage().instance().set(&DataKey::NextProposalId, &1u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::NextProposalId, &1u32);
 
         env.events().publish(
             (symbol_short!("gov"), symbol_short!("init")),
@@ -226,8 +230,8 @@ impl GovernanceContract {
             return Err(Error::NotAnOwner);
         }
 
-        let mut proposal = Self::get_proposal(env.clone(), proposal_id)
-            .ok_or(Error::ProposalNotFound)?;
+        let mut proposal =
+            Self::get_proposal(env.clone(), proposal_id).ok_or(Error::ProposalNotFound)?;
 
         let current_ledger = env.ledger().sequence();
         let ttl = Self::get_proposal_ttl(env.clone());
@@ -241,7 +245,8 @@ impl GovernanceContract {
             return Err(Error::ProposalExpired);
         }
 
-        if proposal.status != ProposalStatus::Pending && proposal.status != ProposalStatus::Approved {
+        if proposal.status != ProposalStatus::Pending && proposal.status != ProposalStatus::Approved
+        {
             return Err(Error::ProposalNotPending);
         }
 
@@ -302,8 +307,8 @@ impl GovernanceContract {
         Self::require_initialized(&env)?;
         executor.require_auth();
 
-        let mut proposal = Self::get_proposal(env.clone(), proposal_id)
-            .ok_or(Error::ProposalNotFound)?;
+        let mut proposal =
+            Self::get_proposal(env.clone(), proposal_id).ok_or(Error::ProposalNotFound)?;
 
         if proposal.status == ProposalStatus::Executed {
             return Err(Error::ProposalAlreadyExecuted);
@@ -342,7 +347,8 @@ impl GovernanceContract {
         if proposal.target == env.current_contract_address() {
             Self::execute_internal_action(&env, proposal.action, proposal.args)?;
         } else {
-            let _result: Val = env.invoke_contract(&proposal.target, &proposal.action, proposal.args.clone());
+            let _result: Val =
+                env.invoke_contract(&proposal.target, &proposal.action, proposal.args.clone());
         }
 
         env.events().publish(
@@ -358,8 +364,8 @@ impl GovernanceContract {
         Self::require_initialized(&env)?;
         caller.require_auth();
 
-        let mut proposal = Self::get_proposal(env.clone(), proposal_id)
-            .ok_or(Error::ProposalNotFound)?;
+        let mut proposal =
+            Self::get_proposal(env.clone(), proposal_id).ok_or(Error::ProposalNotFound)?;
 
         if proposal.proposer != caller && !Self::is_owner(env.clone(), caller.clone()) {
             return Err(Error::Unauthorized);
@@ -473,10 +479,8 @@ impl GovernanceContract {
             .instance()
             .set(&DataKey::ProposalTtl, &new_ttl);
 
-        env.events().publish(
-            (symbol_short!("gov"), symbol_short!("ttl")),
-            new_ttl,
-        );
+        env.events()
+            .publish((symbol_short!("gov"), symbol_short!("ttl")), new_ttl);
 
         Ok(())
     }
@@ -484,10 +488,14 @@ impl GovernanceContract {
     // ── Read-only Queries ──────────────────────────────────────────────────────
 
     pub fn get_proposal(env: Env, proposal_id: u32) -> Option<Proposal> {
-        let mut proposal: Proposal = env.storage().instance().get(&DataKey::Proposal(proposal_id))?;
+        let mut proposal: Proposal = env
+            .storage()
+            .instance()
+            .get(&DataKey::Proposal(proposal_id))?;
         let current_ledger = env.ledger().sequence();
         let ttl = Self::get_proposal_ttl(env);
-        if (proposal.status == ProposalStatus::Pending || proposal.status == ProposalStatus::Approved)
+        if (proposal.status == ProposalStatus::Pending
+            || proposal.status == ProposalStatus::Approved)
             && current_ledger > proposal.created_at_ledger + ttl
         {
             proposal.status = ProposalStatus::Expired;

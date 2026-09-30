@@ -1,10 +1,9 @@
 #![cfg(test)]
 
-use crate::{
-    Error, GovernanceContract, GovernanceContractClient, ProposalStatus,
-};
+use crate::{Error, GovernanceContract, GovernanceContractClient, ProposalStatus};
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, testutils::{Address as _, Ledger},
+    contract, contractimpl, symbol_short,
+    testutils::{Address as _, Ledger},
     Address, Env, IntoVal, String, Symbol, Vec,
 };
 
@@ -14,16 +13,26 @@ struct MockTargetContract;
 #[contractimpl]
 impl MockTargetContract {
     pub fn update_val(env: Env, new_val: u32) -> u32 {
-        env.storage().instance().set(&symbol_short!("val"), &new_val);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("val"), &new_val);
         new_val
     }
 
     pub fn get_val(env: Env) -> u32 {
-        env.storage().instance().get(&symbol_short!("val")).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&symbol_short!("val"))
+            .unwrap_or(0)
     }
 }
 
-fn setup_test() -> (Env, GovernanceContractClient<'static>, Vec<Address>, [Address; 3]) {
+fn setup_test() -> (
+    Env,
+    GovernanceContractClient<'static>,
+    Vec<Address>,
+    [Address; 3],
+) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -189,7 +198,14 @@ fn test_single_owner_threshold_one_auto_approves() {
     let args = Vec::new(&env);
 
     let current_seq = env.ledger().sequence();
-    let pid = client.propose(&owner1, &target, &symbol_short!("act"), &args, &title, &desc);
+    let pid = client.propose(
+        &owner1,
+        &target,
+        &symbol_short!("act"),
+        &args,
+        &title,
+        &desc,
+    );
 
     let p = client.get_proposal(&pid).unwrap();
     assert_eq!(p.status, ProposalStatus::Approved);
@@ -207,7 +223,14 @@ fn test_duplicate_approval_rejected() {
     let desc = String::from_str(&env, "Desc");
     let args = Vec::new(&env);
 
-    let pid = client.propose(&owner1, &target, &symbol_short!("act"), &args, &title, &desc);
+    let pid = client.propose(
+        &owner1,
+        &target,
+        &symbol_short!("act"),
+        &args,
+        &title,
+        &desc,
+    );
 
     // Owner1 is already recorded upon proposal, voting again should fail
     let res = client.try_approve(&owner1, &pid);
@@ -256,7 +279,10 @@ fn test_proposal_expiry_enforcement() {
     // Approving after expiry should fail and mark Expired
     let res = client.try_approve(&owner2, &pid);
     assert_eq!(res, Err(Ok(Error::ProposalExpired)));
-    assert_eq!(client.get_proposal_status(&pid), Some(ProposalStatus::Expired));
+    assert_eq!(
+        client.get_proposal_status(&pid),
+        Some(ProposalStatus::Expired)
+    );
 
     // Executing after expiry should also fail
     let res_exec = client.try_execute(&owner1, &pid);
@@ -365,7 +391,10 @@ fn test_cancel_proposal() {
 
     // Proposer cancels
     client.cancel(&owner1, &pid);
-    assert_eq!(client.get_proposal_status(&pid), Some(ProposalStatus::Cancelled));
+    assert_eq!(
+        client.get_proposal_status(&pid),
+        Some(ProposalStatus::Cancelled)
+    );
 
     // Cancelled proposal cannot be approved or executed
     let res_approve = client.try_approve(&owner1, &pid);
