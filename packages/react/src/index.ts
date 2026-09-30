@@ -9,6 +9,12 @@ export {
 export { useChannel } from './hooks/useChannel.js';
 export { useJob } from './hooks/useJob.js';
 export {
+  useBalance,
+  type UseBalanceOptions,
+  type UseBalanceData,
+  type UseBalanceResult,
+} from './hooks/useBalance.js';
+export {
   useRateLimitStatus,
   type UseRateLimitStatusOptions,
   type UseRateLimitStatusData,
