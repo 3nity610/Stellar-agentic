@@ -111,8 +111,17 @@ impl CircuitBreaker {
         node.require_auth();
         Self::require_trusted(&env, &node);
 
+        let window = Self::get_propose_window(env.clone());
         let mut proposals = Self::pause_proposals(&env);
-        proposals.set(node.clone(), env.ledger().sequence());
+        let current_ledger = env.ledger().sequence();
+
+        if let Some(last_proposed_at) = proposals.get(node.clone()) {
+            if current_ledger < last_proposed_at.saturating_add(window) {
+                panic!("proposal cooldown active");
+            }
+        }
+
+        proposals.set(node.clone(), current_ledger);
         env.storage()
             .instance()
             .set(&DataKey::PauseProposals, &proposals);
