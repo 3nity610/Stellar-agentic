@@ -86,4 +86,4 @@ impl ReputationRegistry {
     fn load(env: &Env, agent: &Address) -> Reputation {
         env.storage().persistent().get(&DataKey::Reputation(agent.clone())).unwrap_or(Reputation { completions: 0, refunds: 0, disputes: 0, volume: 0, first_seen: 0 })
     }
-}
+}\n\n#[cfg(test)]\nmod test;\n
