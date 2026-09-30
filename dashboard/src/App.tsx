@@ -1,13 +1,15 @@
-import { Route, Routes } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Sidebar } from './components/dashboard/Sidebar.js';
-import { OverviewPage } from './pages/OverviewPage.js';
-import { AgentsPage } from './pages/AgentsPage.js';
-import { PaymentsPage } from './pages/PaymentsPage.js';
-import { ReportsPage } from './pages/ReportsPage.js';
-import { JobsPage } from './pages/JobsPage.js';
-import { AlertsPage } from './pages/AlertsPage.js';
-import { HealthPage } from './pages/HealthPage.js';
-import { WalletProvider } from './lib/walletContext.js';
+
+// Lazy-load pages for code splitting
+const OverviewPage = lazy(() => import('./pages/OverviewPage.js').then(m => ({ default: m.OverviewPage })));
+const AgentsPage = lazy(() => import('./pages/AgentsPage.js').then(m => ({ default: m.AgentsPage })));
+const PaymentsPage = lazy(() => import('./pages/PaymentsPage.js').then(m => ({ default: m.PaymentsPage })));
+const ReportsPage = lazy(() => import('./pages/ReportsPage.js').then(m => ({ default: m.ReportsPage })));
+const JobsPage = lazy(() => import('./pages/JobsPage.js').then(m => ({ default: m.JobsPage })));
+const AlertsPage = lazy(() => import('./pages/AlertsPage.js').then(m => ({ default: m.AlertsPage })));
+const HealthPage = lazy(() => import('./pages/HealthPage.js').then(m => ({ default: m.HealthPage })));
 
 function PlaceholderPage({ title }: { title: string }) {
   return (
@@ -42,7 +44,14 @@ export function App() {
 
           <Sidebar />
 
-          <main className="flex flex-1 overflow-hidden relative">
+        <main className="flex flex-1 overflow-hidden relative">
+          <Suspense fallback={
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <p className="font-display text-xl font-semibold text-sa-text mb-2">Loading...</p>
+              </div>
+            </div>
+          }>
             <Routes>
               <Route path="/" element={<OverviewPage />} />
               <Route path="/agents" element={<AgentsPage />} />
@@ -54,9 +63,9 @@ export function App() {
               <Route path="/health" element={<HealthPage />} />
               <Route path="/settings" element={<PlaceholderPage title="Settings" />} />
             </Routes>
-          </main>
-        </div>
-      </BrowserRouter>
-    </WalletProvider>
+          </Suspense>
+        </main>
+      </div>
+    </BrowserRouter>
   );
 }
