@@ -2,7 +2,7 @@ use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env, String};
 
-fn setup() -> (Env, AgentWalletFactoryClient<\x27static>) {
+fn setup() -> (Env, AgentWalletFactoryClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(AgentWalletFactory, ());
