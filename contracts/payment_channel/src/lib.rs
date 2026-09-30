@@ -284,6 +284,9 @@ impl PaymentChannel {
             .instance()
             .set(&soroban_sdk::symbol_short!("channels"), &channels);
 
+        // Topic convention (see docs/events.md):
+        //   ("channel", "opened")  -> (channel_id, agent, owner, deposit)
+        //   ("channel", "state")   -> (channel_id, channel)
         env.events().publish(
             (
                 soroban_sdk::symbol_short!("channel"),
@@ -293,8 +296,8 @@ impl PaymentChannel {
         );
         env.events().publish(
             (
-                soroban_sdk::symbol_short!("state"),
                 soroban_sdk::symbol_short!("channel"),
+                soroban_sdk::symbol_short!("state"),
             ),
             (channel_id, channel),
         );

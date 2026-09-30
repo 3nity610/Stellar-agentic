@@ -10,11 +10,18 @@
 //! 3. Agent B calls `submit_result` with proof of work
 //! 4. Agent A (or arbiter) calls `release` — funds go to Agent B
 //! 5. If Agent B doesn't deliver, Agent A calls `refund` after deadline
+//!
+//! ## Events
+//! See `docs/events.md` for the full topic/data layout. Topics are
+//! `(symbol_short!("escrow"), <action>)` with a parallel `state`/`job` snapshot.
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, Address, Bytes, Env, Map, Symbol,
     Vec,
 };
+
+/// Topic prefix used for all escrow lifecycle events.
+const TOPIC_ESCROW: Symbol = symbol_short!("escrow");
 
 #[cfg(test)]
 mod test;
@@ -120,10 +127,7 @@ impl Escrow {
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("created"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("created")),
             (job_id, requester, amount),
         );
         env.events().publish(
@@ -152,10 +156,7 @@ impl Escrow {
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("accepted"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("accepted")),
             (job_id, worker),
         );
         env.events().publish(
@@ -187,10 +188,7 @@ impl Escrow {
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("result"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("result")),
             (job_id, worker),
         );
         env.events().publish(
@@ -226,10 +224,7 @@ impl Escrow {
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("released"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("released")),
             (job_id, worker, job.amount),
         );
         env.events().publish(
@@ -277,10 +272,7 @@ impl Escrow {
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("refunded"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("refunded")),
             (job_id, requester, job.amount),
         );
         env.events().publish(
@@ -310,10 +302,7 @@ impl Escrow {
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("disputed"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("disputed")),
             (job_id, requester),
         );
         env.events().publish(
@@ -352,10 +341,7 @@ impl Escrow {
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("resolved"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("resolved")),
             (job_id, arbiter, favor_worker),
         );
         env.events().publish(

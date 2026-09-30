@@ -41,6 +41,13 @@
 //! unavailable" and abort the whole operation rather than assuming a
 //! fallback rate — an unpriced conversion must never be treated as an
 //! unlimited/free one.
+//!
+//! ## Events
+//!
+//! `set_price` emits a single event with topic tuple
+//! `(symbol_short!("oracle"), symbol_short!("price"))` and data payload
+//! `(base: Address, price: i128)`. See `docs/events.md` for the full
+//! cross-contract topic layout and indexer coverage.
 
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Map};
 
@@ -66,6 +73,11 @@ impl PriceOracle {
 
     /// Admin-only: publish (or update) the trusted price of `base` in terms
     /// of `quote`. See module docs for the fixed-point convention.
+    ///
+    /// Emits: topics `("oracle", "price")`, data `(base, price)`. The
+    /// `quote` asset is intentionally not part of the payload; indexers
+    /// must key on the `base` address and treat the pair as
+    /// `(base, quote)` per the stored map.
     pub fn set_price(env: Env, admin: Address, base: Address, quote: Address, price: i128) {
         Self::require_admin(&env, &admin);
 

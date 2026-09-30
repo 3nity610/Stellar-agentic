@@ -24,14 +24,6 @@ pub struct AgentInfo {
     pub total_ops: u64,
 }
 
-/// Events emitted by this contract
-#[contracttype]
-pub enum Event {
-    Created,
-    Deactivated,
-    Reactivated,
-}
-
 // ─── Contract ────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -111,11 +103,11 @@ impl AgentWalletFactory {
 
         // Emit creation event
         env.events().publish(
-            (symbol_short!("factory"), symbol_short!("created")),
+            (symbol_short!("agent"), symbol_short!("created")),
             (agent_id, agent_address, owner),
         );
         env.events().publish(
-            (symbol_short!("state"), symbol_short!("agent")),
+            (symbol_short!("agent"), symbol_short!("state")),
             (agent_id, agent),
         );
 
@@ -145,11 +137,11 @@ impl AgentWalletFactory {
             .set(&symbol_short!("agents"), &agents);
 
         env.events().publish(
-            (symbol_short!("factory"), symbol_short!("deactiv")),
+            (symbol_short!("agent"), symbol_short!("deactiv")),
             (agent_id, owner),
         );
         env.events().publish(
-            (symbol_short!("state"), symbol_short!("agent")),
+            (symbol_short!("agent"), symbol_short!("state")),
             (agent_id, agent),
         );
     }
@@ -177,11 +169,11 @@ impl AgentWalletFactory {
             .set(&symbol_short!("agents"), &agents);
 
         env.events().publish(
-            (symbol_short!("factory"), symbol_short!("reactiv")),
+            (symbol_short!("agent"), symbol_short!("reactiv")),
             (agent_id, owner),
         );
         env.events().publish(
-            (symbol_short!("state"), symbol_short!("agent")),
+            (symbol_short!("agent"), symbol_short!("state")),
             (agent_id, agent),
         );
     }
@@ -202,7 +194,7 @@ impl AgentWalletFactory {
             .instance()
             .set(&symbol_short!("agents"), &agents);
         env.events().publish(
-            (symbol_short!("state"), symbol_short!("agent")),
+            (symbol_short!("agent"), symbol_short!("state")),
             (agent_id, agent),
         );
     }
