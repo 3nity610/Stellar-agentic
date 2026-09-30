@@ -6,9 +6,21 @@
 //! Enforces per-transaction, per-minute, and per-hour caps on-chain.
 //! Works as a standalone guard composable with PaymentChannel.
 
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Map};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Map, Vec};
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+/// Rate limit configuration for an agent
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SpendBucket {
+    /// Ledger at which this bucket started
+    pub start_ledger: u32,
+    /// Total spend recorded in this bucket
+    pub spend: i128,
+    /// Number of transactions recorded in this bucket
+    pub tx_count: u32,
+}
 
 /// Rate limit configuration for an agent
 #[contracttype]
@@ -27,12 +39,12 @@ pub struct RateLimit {
     /// Max number of transactions per hour
     pub max_txs_per_hour: u32,
 
-    // ── Rolling window state ──
-    pub hourly_spend: i128,
-    pub daily_spend: i128,
-    pub hourly_tx_count: u32,
-    pub hour_window_start: u32,
-    pub day_window_start: u32,
+    // ── Sliding window state ──
+    /// Buckets covering the last 24h, each spanning LEDGERS_PER_BUCKET ledgers.
+    /// Index 0 is the oldest; the last entry is the current bucket.
+    pub hourly_buckets: Vec<SpendBucket>,
+    /// Buckets covering the last 24h for the daily limit.
+    pub daily_buckets: Vec<SpendBucket>,
 
     pub active: bool,
 }
@@ -68,6 +80,8 @@ impl RateLimiter {
         }
 
         let current_ledger = env.ledger().sequence();
+        let hourly_buckets = Self::new_buckets(&env, current_ledger, HOURLY_BUCKETS);
+        let daily_buckets = Self::new_buckets(&env, current_ledger, DAILY_BUCKETS);
         let limit = RateLimit {
             agent: agent.clone(),
             owner,
@@ -75,11 +89,8 @@ impl RateLimiter {
             max_per_hour,
             max_per_day,
             max_txs_per_hour,
-            hourly_spend: 0,
-            daily_spend: 0,
-            hourly_tx_count: 0,
-            hour_window_start: current_ledger,
-            day_window_start: current_ledger,
+            hourly_buckets,
+            daily_buckets,
             active: true,
         };
 
@@ -104,26 +115,27 @@ impl RateLimiter {
         let mut limit = Self::load_limit(&env, &agent);
         let current_ledger = env.ledger().sequence();
 
-        // Reset windows if expired
-        Self::reset_windows_if_needed(&mut limit, current_ledger);
+        // Advance buckets to the current ledger
+        Self::advance_buckets(&mut limit.hourly_buckets, current_ledger, HOURLY_BUCKETS);
+        Self::advance_buckets(&mut limit.daily_buckets, current_ledger, DAILY_BUCKETS);
 
         // Per-tx check
         if amount > limit.max_per_tx {
             return false;
         }
 
-        // Hourly spend check
-        if limit.hourly_spend + amount > limit.max_per_hour {
+        // Hourly spend check (sum over sliding window)
+        if Self::sum_spend(&limit.hourly_buckets) + amount > limit.max_per_hour {
             return false;
         }
 
-        // Daily spend check
-        if limit.daily_spend + amount > limit.max_per_day {
+        // Daily spend check (sum over sliding window)
+        if Self::sum_spend(&limit.daily_buckets) + amount > limit.max_per_day {
             return false;
         }
 
         // Hourly tx count check
-        if limit.hourly_tx_count >= limit.max_txs_per_hour {
+        if Self::sum_tx_count(&limit.hourly_buckets) >= limit.max_txs_per_hour {
             return false;
         }
 
@@ -142,11 +154,12 @@ impl RateLimiter {
         let mut limit = Self::load_limit(&env, &agent);
         let current_ledger = env.ledger().sequence();
 
-        Self::reset_windows_if_needed(&mut limit, current_ledger);
+        // Advance buckets to the current ledger
+        Self::advance_buckets(&mut limit.hourly_buckets, current_ledger, HOURLY_BUCKETS);
+        Self::advance_buckets(&mut limit.daily_buckets, current_ledger, DAILY_BUCKETS);
 
-        limit.hourly_spend += amount;
-        limit.daily_spend += amount;
-        limit.hourly_tx_count += 1;
+        Self::add_to_current_bucket(&mut limit.hourly_buckets, current_ledger, amount, 1);
+        Self::add_to_current_bucket(&mut limit.daily_buckets, current_ledger, amount, 1);
 
         Self::save_limit(&env, &agent, limit.clone());
 
@@ -188,6 +201,11 @@ impl RateLimiter {
         limit.max_per_hour = max_per_hour;
         limit.max_per_day = max_per_day;
         limit.max_txs_per_hour = max_txs_per_hour;
+
+        // Rebuild buckets so the new configuration is honored from now on.
+        let current_ledger = env.ledger().sequence();
+        limit.hourly_buckets = Self::new_buckets(&env, current_ledger, HOURLY_BUCKETS);
+        limit.daily_buckets = Self::new_buckets(&env, current_ledger, DAILY_BUCKETS);
 
         Self::save_limit(&env, &agent, limit.clone());
         env.events().publish(
@@ -243,20 +261,91 @@ impl RateLimiter {
 
     // ── Internals ────────────────────────────────────────────────────────────
 
-    fn reset_windows_if_needed(limit: &mut RateLimit, current_ledger: u32) {
-        const LEDGERS_PER_HOUR: u32 = 720;
-        const LEDGERS_PER_DAY: u32 = 17_280;
-
-        if current_ledger >= limit.hour_window_start + LEDGERS_PER_HOUR {
-            limit.hourly_spend = 0;
-            limit.hourly_tx_count = 0;
-            limit.hour_window_start = current_ledger;
+    /// Number of buckets used to cover the hourly window. Each bucket spans
+    /// `LEDGERS_PER_HOUR / HOURLY_BUCKETS` ledgers, giving a sliding window
+    /// with bounded granularity while keeping storage small.
+    fn new_buckets(env: &Env, current_ledger: u32, count: u32) -> Vec<SpendBucket> {
+        let mut buckets = Vec::new(env);
+        for _ in 0..count {
+            buckets.push_back(SpendBucket {
+                start_ledger: current_ledger,
+                spend: 0,
+                tx_count: 0,
+            });
         }
+        buckets
+    }
 
-        if current_ledger >= limit.day_window_start + LEDGERS_PER_DAY {
-            limit.daily_spend = 0;
-            limit.day_window_start = current_ledger;
+    /// Advance the ring of buckets so the last bucket corresponds to the
+    /// bucket containing `current_ledger`. Buckets that fall out of the
+    /// window are reset and reused.
+    fn advance_buckets(buckets: &mut Vec<SpendBucket>, current_ledger: u32, count: u32) {
+        let bucket_size = LEDGERS_PER_HOUR / count;
+        if bucket_size == 0 {
+            return;
         }
+        let current_bucket_start = (current_ledger / bucket_size) * bucket_size;
+
+        // Advance until the last bucket's start matches the current bucket.
+        loop {
+            let last = buckets.get(count - 1).unwrap();
+            if last.start_ledger >= current_bucket_start {
+                break;
+            }
+            // Rotate: drop the oldest, push a fresh bucket.
+            let mut rotated = Vec::new(buckets.env());
+            for i in 1..count {
+                rotated.push_back(buckets.get(i).unwrap());
+            }
+            rotated.push_back(SpendBucket {
+                start_ledger: last.start_ledger + bucket_size,
+                spend: 0,
+                tx_count: 0,
+            });
+            *buckets = rotated;
+        }
+    }
+
+    fn sum_spend(buckets: &Vec<SpendBucket>) -> i128 {
+        let mut total: i128 = 0;
+        for i in 0..buckets.len() {
+            total += buckets.get(i).unwrap().spend;
+        }
+        total
+    }
+
+    fn sum_tx_count(buckets: &Vec<SpendBucket>) -> u32 {
+        let mut total: u32 = 0;
+        for i in 0..buckets.len() {
+            total += buckets.get(i).unwrap().tx_count;
+        }
+        total
+    }
+
+    fn add_to_current_bucket(
+        buckets: &mut Vec<SpendBucket>,
+        current_ledger: u32,
+        amount: i128,
+        tx_count: u32,
+    ) {
+        let count = buckets.len();
+        if count == 0 {
+            return;
+        }
+        let bucket_size = LEDGERS_PER_HOUR / count;
+        if bucket_size == 0 {
+            return;
+        }
+        let current_bucket_start = (current_ledger / bucket_size) * bucket_size;
+        let mut last = buckets.get(count - 1).unwrap();
+        if last.start_ledger != current_bucket_start {
+            last.start_ledger = current_bucket_start;
+            last.spend = 0;
+            last.tx_count = 0;
+        }
+        last.spend += amount;
+        last.tx_count += tx_count;
+        buckets.set(count - 1, last);
     }
 
     fn has_limit(env: &Env, agent: &Address) -> bool {
@@ -289,3 +378,7 @@ impl RateLimiter {
             .set(&soroban_sdk::symbol_short!("limits"), &limits);
     }
 }
+
+const LEDGERS_PER_HOUR: u32 = 720;
+const HOURLY_BUCKETS: u32 = 12;
+const DAILY_BUCKETS: u32 = 24;
