@@ -41,6 +41,8 @@
 
 ## Interfaces
 
+- [SolvencyVerifyingKey](interfaces/SolvencyVerifyingKey.md)
+- [SolvencyProof](interfaces/SolvencyProof.md)
 - [CircuitBreakerOptions](interfaces/CircuitBreakerOptions.md)
 - [ChannelAccount](interfaces/ChannelAccount.md)
 - [ChannelAccountFactory](interfaces/ChannelAccountFactory.md)
@@ -60,6 +62,8 @@
 - [SubmissionQueueOptions](interfaces/SubmissionQueueOptions.md)
 - [SubmitOptions](interfaces/SubmitOptions.md)
 - [SubmissionQueueStats](interfaces/SubmissionQueueStats.md)
+- [RawSolvencyVerifyingKey](interfaces/RawSolvencyVerifyingKey.md)
+- [RawSolvencyProof](interfaces/RawSolvencyProof.md)
 - [LedgerCloseSample](interfaces/LedgerCloseSample.md)
 - [LedgerCloseEstimate](interfaces/LedgerCloseEstimate.md)
 - [RoutePlannerOptions](interfaces/RoutePlannerOptions.md)
@@ -112,6 +116,8 @@
 
 ## Type Aliases
 
+- [SolvencyG1Point](type-aliases/SolvencyG1Point.md)
+- [SolvencyG2Point](type-aliases/SolvencyG2Point.md)
 - [PublicAddress](type-aliases/PublicAddress.md)
 - [ContractKey](type-aliases/ContractKey.md)
 - [StellarAgentErrorCode](type-aliases/StellarAgentErrorCode.md)
@@ -131,6 +137,14 @@
 
 ## Variables
 
+- [FP\_SIZE](variables/FP_SIZE.md)
+- [G1\_POINT\_SIZE](variables/G1_POINT_SIZE.md)
+- [FP2\_SIZE](variables/FP2_SIZE.md)
+- [G2\_POINT\_SIZE](variables/G2_POINT_SIZE.md)
+- [FR\_SIZE](variables/FR_SIZE.md)
+- [SOLVENCY\_PUBLIC\_INPUTS](variables/SOLVENCY_PUBLIC_INPUTS.md)
+- [GAMMA\_ABC\_G1\_SIZE](variables/GAMMA_ABC_G1_SIZE.md)
+- [SOROBAN\_G1\_GENERATOR](variables/SOROBAN_G1_GENERATOR.md)
 - [CONTRACT\_KEYS](variables/CONTRACT_KEYS.md)
 - [UNCONFIGURED\_CONTRACTS](variables/UNCONFIGURED_CONTRACTS.md)
 - [FALLBACK\_LEDGER\_CLOSE\_SECONDS](variables/FALLBACK_LEDGER_CLOSE_SECONDS.md)
@@ -144,6 +158,14 @@
 
 ## Functions
 
+- [toSolvencyG1](functions/toSolvencyG1.md)
+- [toSolvencyG2](functions/toSolvencyG2.md)
+- [g1Generator](functions/g1Generator.md)
+- [g1Infinity](functions/g1Infinity.md)
+- [solvencyVerifyingKeyVal](functions/solvencyVerifyingKeyVal.md)
+- [solvencyProofVal](functions/solvencyProofVal.md)
+- [setSolvencyVk](functions/setSolvencyVk.md)
+- [verifySolvencyProof](functions/verifySolvencyProof.md)
 - [asPublicAddress](functions/asPublicAddress.md)
 - [isDeployedAddress](functions/isDeployedAddress.md)
 - [envVarNames](functions/envVarNames.md)
@@ -151,6 +173,8 @@
 - [assertDeployed](functions/assertDeployed.md)
 - [asFeeStrategy](functions/asFeeStrategy.md)
 - [classifySubmissionError](functions/classifySubmissionError.md)
+- [decodeSolvencyVerifyingKey](functions/decodeSolvencyVerifyingKey.md)
+- [decodeSolvencyProof](functions/decodeSolvencyProof.md)
 - [estimateLedgerCloseSeconds](functions/estimateLedgerCloseSeconds.md)
 - [estimateSecondsRemaining](functions/estimateSecondsRemaining.md)
 - [fetchLedgerCloseEstimate](functions/fetchLedgerCloseEstimate.md)

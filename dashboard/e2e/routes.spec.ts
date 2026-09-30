@@ -7,19 +7,23 @@ import { test, expect, type Page } from '@playwright/test';
  * blew up in the console" rather than deep assertions on the mock data —
  * these exist to catch the failure mode the dashboard actually has today
  * (a bad import or a router regression turning a route into a blank screen).
+ *
+ * `/limits` is deliberately absent: it renders from a live
+ * `useRateLimitStatus` hook, so it needs a stub agent and real assertions
+ * rather than a heading check. See `limits.spec.ts`.
  */
 
-/** The fully-built routes, plus the two intentional placeholders. */
+/** The fully-built routes, plus the one intentional placeholder. */
 const MAIN_ROUTES = [
   { path: '/', heading: 'Overview' },
   { path: '/agents', heading: 'Agents' },
   { path: '/payments', heading: 'Payments' },
   { path: '/reports', heading: 'Reports' },
   { path: '/jobs', heading: 'Escrow Jobs' },
+  { path: '/limits', heading: 'Rate Limits' },
 ] as const;
 
 const PLACEHOLDER_ROUTES = [
-  { path: '/limits', heading: 'Rate Limits' },
   { path: '/settings', heading: 'Settings' },
 ] as const;
 

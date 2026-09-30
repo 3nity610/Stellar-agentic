@@ -28,14 +28,21 @@ function PlaceholderPage({ title }: { title: string }) {
   );
 }
 
+/**
+ * The application shell.
+ *
+ * `DashboardAgentBoundary` is what decides whether there is an agent to read
+ * from; the pages below it can assume there is one, and never have to check.
+ */
 export function App() {
   return (
-    <BrowserRouter>
-      <div className="flex min-h-screen bg-sa-bg bg-grid-pattern bg-grid">
-        {/* Radial glow overlay */}
-        <div className="fixed inset-0 bg-radial-glow pointer-events-none" />
+    <WalletProvider>
+      <BrowserRouter>
+        <div className="flex min-h-screen bg-sa-bg bg-grid-pattern bg-grid">
+          {/* Radial glow overlay */}
+          <div className="fixed inset-0 bg-radial-glow pointer-events-none" />
 
-        <Sidebar />
+          <Sidebar />
 
         <main className="flex flex-1 overflow-hidden relative">
           <Suspense fallback={
