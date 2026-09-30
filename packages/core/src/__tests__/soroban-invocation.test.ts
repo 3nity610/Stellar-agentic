@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   Account,
   Address,
@@ -12,6 +14,19 @@ import {
 import { StellarAgent, StellarAgentError } from '../index.js';
 import type { Signer } from '../signer.js';
 import { TEST_PUBLIC, TEST_SECRET, DEPLOYED_CONTRACTS } from './fixtures.js';
+
+// The same JSON is checked against the WASM-derived contract specs and read by
+// the Python generated-type test. Restore the native values returned by RPC.
+const contractResponses = JSON.parse(
+  readFileSync(resolve(process.cwd(), '../../fixtures/contract-responses.json'), 'utf8'),
+  (_key, value: unknown) => {
+    if (typeof value === 'string' && /^-?\d+$/.test(value)) return BigInt(value);
+    if (typeof value === 'string' && /^0x(?:[0-9a-fA-F]{2})*$/.test(value)) {
+      return Buffer.from(value.slice(2), 'hex');
+    }
+    return value;
+  },
+) as Record<string, unknown>;
 
 function addressAuthEntry(): xdr.SorobanAuthorizationEntry {
   const invokeArgs = new xdr.InvokeContractArgs({
@@ -166,59 +181,7 @@ describe('shared Soroban invocation pipeline', () => {
     }, 'invokeContract').mockImplementation(
       async (...args: unknown[]) => {
         const method = String(args[1]);
-        const values: Record<string, unknown> = {
-          get_agent: {
-            address: TEST_PUBLIC,
-            name: 'worker',
-            owner: TEST_PUBLIC,
-            active: true,
-            created_at: 9,
-            total_ops: 3n,
-          },
-          get_channel: {
-            agent: TEST_PUBLIC,
-            owner: TEST_PUBLIC,
-            token: DEPLOYED_CONTRACTS.paymentChannel,
-            limit_per_period: 50n,
-            period: ['Hourly'],
-            spent_this_period: 10n,
-            period_start_ledger: 700,
-            total_spent: 20n,
-            active: true,
-            allocated: 0n,
-            collateral: 100n,
-            dispute_ledgers: 17280,
-            voucher_signer: null,
-          },
-          get_job: {
-            requester: TEST_PUBLIC,
-            worker: TEST_PUBLIC,
-            arbiter: null,
-            token: DEPLOYED_CONTRACTS.escrow,
-            amount: 25n,
-            task_description: Buffer.from('task'),
-            result: Buffer.from('done'),
-            deadline_ledger: 99,
-            status: ['PendingRelease'],
-            created_at: 8,
-            dispute_deadline_ledger: null,
-          },
-          get_limits: {
-            agent: TEST_PUBLIC,
-            owner: TEST_PUBLIC,
-            max_per_tx: 10_000_000n,
-            max_per_hour: 20_000_000n,
-            max_per_day: 30_000_000n,
-            max_txs_per_hour: 4,
-            hourly_spend: 5_000_000n,
-            daily_spend: 6_000_000n,
-            hourly_tx_count: 2,
-            hour_window_start: 700,
-            day_window_start: 100,
-            active: true,
-          },
-        };
-        return { value: values[method], tx: { hash: '', success: true } };
+        return { value: contractResponses[method], tx: { hash: '', success: true } };
       },
     );
 

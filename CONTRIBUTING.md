@@ -315,6 +315,22 @@ structs the SDKs actually decode today (`AgentInfo`, `Channel`, `Job`,
 `RateLimit`); add a contract there the day another one gains an SDK-facing
 struct.
 
+### Shared contract response fixtures
+
+`fixtures/contract-responses.json` holds example `get_agent`, `get_channel`,
+`get_job`, and `get_limits` results for both SDKs. The TypeScript invocation
+test uses them as mock return values. The Python test checks them against its
+generated dataclasses; Python contract RPC methods are still stubs.
+
+After changing one of these contract structs, regenerate the specs and types
+as above, then update the corresponding response in the JSON file. Integer
+values wider than `u32` are decimal strings, bytes are `0x`-prefixed hex,
+optional values use `null`, and unit enums use a one-item array containing
+the Rust variant name. Run `pnpm contract-responses:check` to compare every
+fixture field and value type with the committed WASM-derived specs. CI runs
+this check alongside `contract-types:check`, so adding a struct field requires
+the fixture and both SDK shape tests to catch up.
+
 ---
 
 ## Dependency updates

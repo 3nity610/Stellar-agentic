@@ -21,6 +21,7 @@
     "contracts:specs:check": "cd contracts && ./generate-specs.sh --check",
     "contract-types:generate": "tsx scripts/generate-contract-types.ts",
     "contract-types:check": "tsx scripts/generate-contract-types.ts --check",
+    "contract-responses:check": "node scripts/check-contract-response-fixtures.mjs",
     "docs:api": "tsx scripts/check-public-api.ts && tsx scripts/generate-api-docs.ts",
     "docs:api:check": "tsx scripts/check-public-api.ts --check && tsx scripts/generate-api-docs.ts --check"
   },
