@@ -83,6 +83,35 @@ pnpm --filter @stellaragent/core typecheck
 pnpm --filter @stellaragent/core lint
 ```
 
+### Local-network integration tests
+
+`src/__tests__/integration.local.test.ts` runs against a Soroban standalone network and is **skipped by default**. To run it:
+
+```bash
+# 1. Start the local Stellar network
+stellar network start local
+
+# 2. Deploy all contracts to the local network
+pnpm deploy:contracts --network local --source alice
+
+# 3. Export the environment variables printed by the deploy command
+#    (e.g., export STELLARAGENT_LOCAL_AGENT_WALLET_FACTORY=...)
+#    These are also written to deployments/local.json
+
+# 4. Run the integration suite
+STELLAR_LOCAL_INTEGRATION=1 pnpm --filter @stellaragent/core test
+```
+
+The suite funds isolated owner/worker accounts through the local friendbot and exercises:
+- Agent registration
+- Complete payment-channel lifecycle (open, pay, rate-limit checks, close)
+- Solvency proof installation and verification
+- Parallel escrow lifecycle (create, accept, submit, release)
+- Circuit breaker status checks
+- Fuzz testing of `predictPaymentOutcome` vs on-chain `RateLimiter.check`
+
+This is the only test suite that runs against a real network rather than mocks, so it catches decoding mismatches between SDK and contract that would otherwise pass CI.
+
 After changing a public type or a `StellarAgent` method's signature or doc
 comment, regenerate the API report and reference docs from the repo root:
 

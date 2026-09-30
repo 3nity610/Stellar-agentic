@@ -102,9 +102,25 @@ cd stellaragent
 # Install every workspace package in one shot (pnpm, from the repo root)
 pnpm install
 
+# Install pre-commit hooks (optional but recommended)
+pnpm prepare
+
 # Run testnet locally (optional)
 stellar network start local
 ```
+
+### Pre-commit hooks
+
+This repo uses husky + lint-staged for fast pre-commit checks. After running `pnpm install`, the hooks are automatically installed via `pnpm prepare`.
+
+The pre-commit hook runs:
+- **TypeScript/JavaScript**: eslint --fix and prettier --write on staged files
+- **Python**: ruff check --fix and ruff format on staged files
+- **Rust**: cargo fmt --check on staged .rs files
+
+These checks are intentionally fast and focus on formatting/linting. Full test runs are left to CI to keep commits fast.
+
+**Opt-out**: If you prefer your own pre-commit setup, you can skip hook installation by not running `pnpm prepare`, or remove the `.husky` directory.
 
 ---
 

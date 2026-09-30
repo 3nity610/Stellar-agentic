@@ -29,3 +29,8 @@ hex = "0.4"
 [dev-dependencies]
 soroban-sdk = { version = "22.0.0", features = ["testutils"] }
 payment_channel = { path = "../../contracts/payment_channel" }
+criterion = "0.5"
+
+[[bench]]
+name = "proving_bench"
+harness = false
