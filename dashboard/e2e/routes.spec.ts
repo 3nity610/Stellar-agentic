@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 
 /**
  * Smoke tests for every route the dashboard serves.
@@ -8,9 +9,8 @@ import { test, expect, type Page } from '@playwright/test';
  * these exist to catch the failure mode the dashboard actually has today
  * (a bad import or a router regression turning a route into a blank screen).
  *
- * `/limits` is deliberately absent: it renders from a live
- * `useRateLimitStatus` hook, so it needs a stub agent and real assertions
- * rather than a heading check. See `limits.spec.ts`.
+ * ACCESSIBILITY: Every route is tested for critical WCAG violations using axe-core.
+ * The suite will fail if any critical accessibility issues are detected.
  */
 
 /** The fully-built routes, plus the one intentional placeholder. */
@@ -68,6 +68,27 @@ test.describe('main routes', () => {
       const text = await page.locator('main').innerText();
       expect(text.trim().length).toBeGreaterThan(20);
     });
+
+    test(`${path} has zero critical accessibility violations`, async ({ page }) => {
+      await page.goto(path);
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+        .analyze();
+      
+      const criticalViolations = results.violations.filter(
+        v => v.impact === 'critical' || v.impact === 'serious'
+      );
+      
+      expect(criticalViolations, 
+        `Found ${criticalViolations.length} critical/serious accessibility violations on ${path}:\n` +
+        criticalViolations.map(v => 
+          `  - ${v.id}: ${v.description}\n` +
+          `    Impact: ${v.impact}\n` +
+          `    Help: ${v.helpUrl}\n` +
+          `    Affected nodes: ${v.nodes.length}`
+        ).join('\n')
+      ).toEqual([]);
+    });
   }
 });
 
@@ -116,5 +137,36 @@ test.describe('page metadata', () => {
   test('sets the document title', async ({ page }) => {
     await page.goto('/');
     await expect(page).toHaveTitle(/StellarAgent/);
+  });
+});
+
+test.describe('keyboard navigation', () => {
+  test('can navigate through all sidebar links using Tab', async ({ page }) => {
+    await page.goto('/');
+    
+    // Focus the first navigation link
+    await page.keyboard.press('Tab');
+    const firstLink = page.getByRole('link', { name: 'Overview' });
+    await expect(firstLink).toBeFocused();
+    
+    // Tab through all navigation items
+    const navItems = ['Agents', 'Payments', 'Reports', 'Escrow Jobs', 'Alerts', 'Health', 'Rate Limits', 'Settings'];
+    for (const itemName of navItems) {
+      await page.keyboard.press('Tab');
+      const link = page.getByRole('link', { name: itemName });
+      await expect(link).toBeFocused();
+    }
+  });
+
+  test('can activate navigation links using Enter key', async ({ page }) => {
+    await page.goto('/');
+    
+    // Tab to the Agents link and activate it
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab'); // Move to Agents
+    await page.keyboard.press('Enter');
+    
+    await expect(page.getByRole('heading', { name: 'Agents', level: 1 })).toBeVisible();
+    expect(page.url()).toContain('/agents');
   });
 });

@@ -120,15 +120,16 @@ export function JobsPage() {
                           </div>
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-display text-xl font-semibold text-sa-green">
-                          ${job.amount}
-                        </p>
-                        <p className="text-xs text-sa-text-dim">{job.asset}</p>
-                        <div className="flex items-center gap-1 mt-2 justify-end text-xs text-sa-text-dim">
-                          <Clock size={10} />
-                          {job.deadline}
-                        </div>
+                      <div>
+                        <span className="label">Worker </span>
+                        {job.workerName ? (
+                          <>
+                            <span className="text-sa-text">{job.workerName}</span>
+                            <span className="ml-1"><AddressChip address={job.worker!} /></span>
+                          </>
+                        ) : (
+                          <span className="text-sa-text-dim italic">Not yet assigned</span>
+                        )}
                       </div>
                     </div>
 

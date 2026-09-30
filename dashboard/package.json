@@ -15,7 +15,6 @@
     "test:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^12.0.0",
     "@stellaragent/core": "workspace:*",
     "@stellaragent/react": "workspace:*",
@@ -30,6 +29,7 @@
     "tailwind-merge": "^2.3.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.47.0",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",
