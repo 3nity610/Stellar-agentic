@@ -22,6 +22,18 @@ def is_window_expired(window_start: int, ledgers_per_window: int, current_ledger
     return current_ledger >= window_start + ledgers_per_window
 
 
+def ledgers_remaining_in_window(
+    window_start: int, ledgers_per_window: int, current_ledger: int
+) -> int:
+    """Ledgers left before a rolling window resets, floored at 0.
+
+    Mirrors ``ledgersRemainingInWindow`` in ``predict.ts``. An expired
+    window reports 0 remaining, never a negative count.
+    """
+    remaining = window_start + ledgers_per_window - current_ledger
+    return remaining if remaining > 0 else 0
+
+
 @dataclass
 class ChannelSpendState:
     active: bool
