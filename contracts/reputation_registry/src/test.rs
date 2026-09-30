@@ -2,7 +2,7 @@ use super::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env};
 
-fn setup() -> (Env, ReputationRegistryClient<\x27static>, Address, Address) {
+fn setup() -> (Env, ReputationRegistryClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
     let id = env.register(ReputationRegistry, ());
