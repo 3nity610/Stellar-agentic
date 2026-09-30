@@ -4,19 +4,16 @@
 //! circuit sizes (different MAX_PAYMENTS values) to determine the practical
 //! ceiling for on-chain verification on Soroban.
 
-use ark_bls12_381::Bls12_381;
-use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
-use ark_relations::r1cs::ConstraintSynthesizer;
 use ark_std::rand::rngs::StdRng;
 use ark_std::rand::SeedableRng;
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use solvency_proof::{circuit::SolvencyCircuit, HistoryEntry, prove, verify_native, setup};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use solvency_proof::{prove, setup, verify_native, HistoryEntry};
 
 /// Generate a realistic payment history for benchmarking.
 fn generate_history(num_payments: usize, limit_per_period: u128) -> Vec<HistoryEntry> {
     (0..num_payments)
         .map(|i| HistoryEntry {
-            amount: (limit_per_period / (num_payments as u128 + 1)) as u128,
+            amount: limit_per_period / (num_payments as u128 + 1),
             period_index: (i / 4) as u64, // Group payments into periods
         })
         .collect()
@@ -25,24 +22,22 @@ fn generate_history(num_payments: usize, limit_per_period: u128) -> Vec<HistoryE
 /// Benchmark setup (trusted setup ceremony) time.
 fn bench_setup(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(42);
-    
-    c.bench_function("setup", |b| {
-        b.iter(|| setup(black_box(&mut rng)))
-    });
+
+    c.bench_function("setup", |b| b.iter(|| setup(black_box(&mut rng))));
 }
 
 /// Benchmark proof generation for different circuit sizes.
 fn bench_prove(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(42);
     let (pk, _vk) = setup(&mut rng).unwrap();
-    
+
     let mut group = c.benchmark_group("prove");
-    
+
     for num_payments in [1, 2, 4, 8, 16].iter() {
         let history = generate_history(*num_payments, 1_000_000);
         let limit_per_period = 1_000_000u128;
         let total_spent: u128 = history.iter().map(|h| h.amount).sum();
-        
+
         group.bench_with_input(
             BenchmarkId::from_parameter(num_payments),
             num_payments,
@@ -67,16 +62,16 @@ fn bench_prove(c: &mut Criterion) {
 fn bench_verify(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(42);
     let (pk, vk) = setup(&mut rng).unwrap();
-    
+
     let mut group = c.benchmark_group("verify");
-    
+
     for num_payments in [1, 2, 4, 8, 16].iter() {
         let history = generate_history(*num_payments, 1_000_000);
         let limit_per_period = 1_000_000u128;
         let total_spent: u128 = history.iter().map(|h| h.amount).sum();
-        
+
         let proof = prove(&pk, &history, limit_per_period, total_spent, &mut rng).unwrap();
-        
+
         group.bench_with_input(
             BenchmarkId::from_parameter(num_payments),
             num_payments,
@@ -99,26 +94,25 @@ fn bench_verify(c: &mut Criterion) {
 fn bench_proof_size(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(42);
     let (pk, _vk) = setup(&mut rng).unwrap();
-    
+
     let mut group = c.benchmark_group("proof_size");
-    
+
     for num_payments in [1, 2, 4, 8, 16].iter() {
         let history = generate_history(*num_payments, 1_000_000);
         let limit_per_period = 1_000_000u128;
         let total_spent: u128 = history.iter().map(|h| h.amount).sum();
-        
+
         let proof = prove(&pk, &history, limit_per_period, total_spent, &mut rng).unwrap();
         let soroban_proof = solvency_proof::proof_to_soroban_bytes(&proof);
-        
+
         group.bench_with_input(
             BenchmarkId::from_parameter(num_payments),
             num_payments,
             |b, _| {
                 b.iter(|| {
-                    let size = black_box(&soroban_proof).a.len()
+                    black_box(&soroban_proof).a.len()
                         + black_box(&soroban_proof).b.len()
-                        + black_box(&soroban_proof).c.len();
-                    size
+                        + black_box(&soroban_proof).c.len()
                 })
             },
         );

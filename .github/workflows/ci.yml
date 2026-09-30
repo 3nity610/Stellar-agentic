@@ -322,6 +322,57 @@ jobs:
       - name: Build the container image
         run: docker build -t stellaragent-signer:ci .
 
+  # ── ZK solvency proofs ───────────────────────────────────────────────────
+  #
+  # zk/ is its own cargo workspace, separate from contracts/ (wasm32v1-none),
+  # sdk/rust and services/signer — see #345. CI never compiled it before, even
+  # though contracts/src/payment_channel.rs::verify_solvency_proof depends on
+  # the encoding this crate defines, so the crate could break with nothing going
+  # red.
+  #
+  # It needs its own lockfile for the same reason contracts/ has one:
+  # soroban-env-host arrives as a dev-dependency (through payment_channel) and
+  # declares ed25519-dalek ">=2.0.0", which resolves to 3.0.0 unpinned — and
+  # 3.0.0 does not compile against it (E0277). zk/Cargo.lock pins 2.2.0.
+  zk:
+    name: ZK solvency proofs (Rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: zk
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zk
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # --all-targets compiles benches/proving_bench.rs too. The benchmarks
+      # are never run here (a single Groth16 proof costs seconds), but a
+      # compile error in them would otherwise only surface on someone's
+      # laptop.
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # --locked makes the lockfile a gate rather than a hint: without it a
+      # transitive release that breaks the build would turn this job red on an
+      # unrelated commit. The end-to-end suite drives real Groth16 proving and
+      # the on-chain BLS12-381 verifier, so it is slow by nature — hence the
+      # job timeout above rather than a per-test budget.
+      - name: Run tests
+        run: cargo test --all --locked
+
   # ── Python SDK ────────────────────────────────────────────────────────────
   python:
     name: SDK (Python ${{ matrix.python-version }})
