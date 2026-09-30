@@ -205,6 +205,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace dependencies
+        run: pnpm turbo run build --filter=@stellaragent/core --filter=@stellaragent/react
+
       - name: Check public API report and generated docs
         run: pnpm docs:api:check
 

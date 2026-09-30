@@ -7,14 +7,16 @@
   "types": "dist/index.d.ts",
   "files": ["dist"],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "build": "tsup src/index.ts --format cjk,esm --dts",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "benchmark:fleet": "tsx scripts/benchmark-fleet.ts",
     "lint": "eslint src --ext .ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "docs:api": "typedoc --out ../../docs/api --plugin typedoc-plugin-markdown --readme none --entryPoints src/index.ts",
+    "docs:api:check": "typedoc --out ../../docs/api --plugin typedoc-plugin-markdown --readme none --entryPoints src/index.ts && git diff --exit-code --quiet ../../docs/api"
   },
   "keywords": ["stellar", "soroban", "ai-agents", "payments", "blockchain"],
   "license": "MIT",
@@ -48,7 +50,9 @@
     "@vitest/coverage-v8": "^1.0.0",
     "eslint": "^8.0.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser": "^7.0.0"
+    "@typescript-eslint/parser": "^7.0.0",
+    "typedoc": "^0.26.0",
+    "typedoc-plugin-markdown": "^4.0.0"
   },
   "exports": {
     ".": {

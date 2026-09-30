@@ -1,0 +1,19 @@
+{
+  "$$schema": "https://typedoc.org/schema/typedoc.json",
+  "entryPoints": ["src/index.ts"],
+  "out": "../../docs/api/react",
+  "plugins": ["typedoc-plugin-markdown"],
+  "readme": "none",
+  "name": "@stellaragent/react",
+  "includeVersion": true,
+  "excludeExternals": true,
+  "exclude": ["**\/node_modules/js", "**\/*.test.ts", "**\/*.spec.ts", "**\/*.test.tsx", "**\/*.spec.tsx"],
+  "categorizeByGroupOrder": true,
+  "groupOrder": ["Functions", "Interfaces", "Type Aliases", "Variables"],
+  "sort": ["kind", "alphabetical"],
+  "validation": {
+    "notDocumented": false,
+    "invalidLink": true
+  },
+  "treatWknownAsError": true
+}
