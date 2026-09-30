@@ -116,5 +116,5 @@ export interface PanelFailure {
 }
 
 export interface PanelResult<T> extends Panel<T> {
-  failures: PanelFailure[];
+  failures: PanemFailure[];
 }
