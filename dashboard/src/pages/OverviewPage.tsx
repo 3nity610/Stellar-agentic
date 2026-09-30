@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import {
   AreaChart,
@@ -27,12 +28,25 @@ import type { Agent } from '../lib/chain/types.js';
 
 // ─── Custom Tooltip ───────────────────────────────────────────────────────────
 
-function CustomTooltip({ active, payload, label }: any) {
+interface TooltipPayloadEntry {
+  value?: number | string;
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: TooltipPayloadEntry[];
+  label?: ReactNode;
+}
+
+function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
     <div className="card p-3 text-xs shadow-xl">
       <p className="label mb-2">{label}</p>
-      <p className="text-sa-accent font-mono">${payload[0]?.value?.toFixed(3)} spent</p>
+      <p className="text-sa-accent font-mono">
+        ${typeof payload[0]?.value === 'number' ? payload[0].value.toFixed(3) : payload[0]?.value}{' '}
+        spent
+      </p>
       <p className="text-sa-text-dim font-mono">{payload[1]?.value} ops</p>
     </div>
   );
