@@ -1,7 +1,7 @@
 import { SorobanRpc } from "@stellar/stellar-sdk";
 import { decodeEvent } from "./decoder.js";
 import { IndexerProgressReporter } from "./progress.js";
-import { EventStore } from "./store.js";
+import type { IEventStore } from "./store.js";
 import { createIndexerTelemetry, instrumentIndexRun, instrumentDecodedEvent } from "./telemetry.js";
 import type { IndexerTelemetry } from "./telemetry.js";
 import type {
@@ -15,7 +15,7 @@ import type {
 export interface IndexerOptions {
   rpcUrl?: string;
   source?: EventSource;
-  store: EventStore;
+  store: IEventStore;
   contracts: ContractAddresses;
   startLedger: number;
   rollbackWindow?: number;
@@ -43,7 +43,7 @@ export interface IndexResult {
 
 export class SorobanEventIndexer {
   private readonly source: EventSource;
-  private readonly store: EventStore;
+  private readonly store: IEventStore;
   private readonly contracts: ContractAddresses;
   private readonly startLedger: number;
   private readonly rollbackWindow: number;
