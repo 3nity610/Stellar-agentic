@@ -19,6 +19,11 @@ import {
   type StatementExportFormat,
 } from "./export.js";
 import type { ReconciliationRequest } from "./ledger.js";
+import {
+  METRICS_CONTENT_TYPE,
+  renderPrometheusMetrics,
+  type IndexerProgress,
+} from "./progress.js";
 import type { StatementPeriod } from "./reporting.js";
 import type { EventStore } from "./store.js";
 
@@ -37,6 +42,13 @@ export interface QueryServerOptions {
   corsOrigin?: string;
   /** Maximum accepted JSON request size. Defaults to 1 MiB. */
   maxRequestBytes?: number;
+  /**
+   * Live ingest progress, normally the running indexer's own reporter. It is
+   * the only source of lag, throughput, and last-error state; without it
+   * `/health` and `/metrics` still answer from the store's checkpoint, but
+   * report lag as `null` rather than guessing zero.
+   */
+  progress?: () => IndexerProgress;
 }
 
 class HttpError extends Error {
@@ -52,6 +64,12 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
   response.statusCode = status;
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.end(JSON.stringify(body));
+}
+
+function sendText(response: ServerResponse, status: number, contentType: string, body: string): void {
+  response.statusCode = status;
+  response.setHeader("content-type", contentType);
+  response.end(body);
 }
 
 function numericParameter(url: URL, name: string): number | undefined {
@@ -132,6 +150,36 @@ function schedulingStore(options: QueryServerOptions): ReportDeliveryStore {
   return options.deliveryStore;
 }
 
+/**
+ * Progress for a query server that was not handed a reporter.
+ *
+ * Every count is a real zero, but lag stays `null` rather than `0`: "no
+ * progress recorded" and "caught up" are different facts and collapsing them
+ * would make a replica with no reporter look perfectly healthy.
+ */
+function unknownProgress(): IndexerProgress {
+  return {
+    started: false,
+    uptimeSeconds: 0,
+    healthy: true,
+    consecutiveFailures: 0,
+    runs: 0,
+    successfulRuns: 0,
+    latestLedger: null,
+    indexedThroughLedger: null,
+    lagLedgers: null,
+    eventsProcessed: 0,
+    decodeFailures: 0,
+    lastRunAt: null,
+    lastSuccessAt: null,
+    lastRunDurationMs: null,
+    lastError: null,
+    lastErrorAt: null,
+    rollbackWindow: 0,
+    finalityLag: 0,
+  };
+}
+
 function inputResult<T>(operation: () => T): T {
   try {
     return operation();
@@ -157,6 +205,25 @@ async function handleRequest(
   }
 
   const url = new URL(request.url ?? "/", "http://localhost");
+  if (request.method === "GET" && url.pathname === "/metrics") {
+    sendText(response, 200, METRICS_CONTENT_TYPE, renderPrometheusMetrics({
+      progress: options.progress?.() ?? unknownProgress(),
+      store: {
+        eventsStored: store.eventCount(),
+        ledgerIssues: store.ledgerIssues().length,
+      },
+      ...(options.deliveryStore
+        ? {
+            delivery: {
+              schedules: options.deliveryStore.schedules().length,
+              deadLetters: options.deliveryStore.deliveries("dead_letter").length,
+            },
+          }
+        : {}),
+    }));
+    return;
+  }
+
   let match = url.pathname.match(
     /^\/reports\/statements\/(agent|owner)\/([^/]+)\/export$/,
   );
@@ -333,9 +400,30 @@ async function handleRequest(
       period: statementPeriod(url),
     });
   } else if (request.method === "GET" && url.pathname === "/health") {
+    const progress = options.progress?.() ?? unknownProgress();
     result = {
+      // `ok` stays a process-level answer so a liveness probe never flaps on a
+      // transient RPC blip; `progress.healthy` carries the ingest-loop verdict
+      // and is what an alert should fire on.
       ok: true,
+      status: progress.healthy ? "ok" : "degraded",
       nextLedger: store.checkpoint() ?? null,
+      lagLedgers: progress.lagLedgers,
+      latestLedger: progress.latestLedger,
+      indexedThroughLedger: progress.indexedThroughLedger,
+      eventsProcessed: progress.eventsProcessed,
+      eventsStored: store.eventCount(),
+      decodeFailures: progress.decodeFailures,
+      lastRunAt: progress.lastRunAt,
+      lastSuccessAt: progress.lastSuccessAt,
+      lastRunDurationMs: progress.lastRunDurationMs,
+      lastError: progress.lastError,
+      lastErrorAt: progress.lastErrorAt,
+      runs: progress.runs,
+      successfulRuns: progress.successfulRuns,
+      consecutiveFailures: progress.consecutiveFailures,
+      rollbackWindowLedgers: progress.rollbackWindow,
+      finalityLagLedgers: progress.finalityLag,
       ledgerIssues: store.ledgerIssues().length,
       ...(options.deliveryStore
         ? {

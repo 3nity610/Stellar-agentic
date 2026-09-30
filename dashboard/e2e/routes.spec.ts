@@ -13,17 +13,17 @@ import AxeBuilder from '@axe-core/playwright';
  * The suite will fail if any critical accessibility issues are detected.
  */
 
-/** The fully-built routes, plus the two intentional placeholders. */
+/** The fully-built routes, plus the one intentional placeholder. */
 const MAIN_ROUTES = [
   { path: '/', heading: 'Overview' },
   { path: '/agents', heading: 'Agents' },
   { path: '/payments', heading: 'Payments' },
   { path: '/reports', heading: 'Reports' },
   { path: '/jobs', heading: 'Escrow Jobs' },
+  { path: '/limits', heading: 'Rate Limits' },
 ] as const;
 
 const PLACEHOLDER_ROUTES = [
-  { path: '/limits', heading: 'Rate Limits' },
   { path: '/settings', heading: 'Settings' },
 ] as const;
 
