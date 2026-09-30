@@ -138,6 +138,36 @@ jobs:
       - name: Build, lint, typecheck, and test
         run: pnpm turbo run build lint typecheck test ${TURBO_FILTERS}
 
+  # ── Deployment script ─────────────────────────────────────────────────────
+  #
+  # scripts/deploy.ts builds, deploys, initializes and cross-wires seven
+  # contracts, then writes deployments/<network>.json and an env block. It is
+  # the piece most likely to be run against mainnet, so its pure parts
+  # (argument parsing, deployment ordering, output rendering) and its dry-run
+  # wiring assertions are covered here without touching a network.
+  deploy-script:
+    name: Deploy script (dry run)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test deployment ordering and output rendering
+        run: pnpm test:deploy
+
   # ── Generated contract types ──────────────────────────────────────────────
   #
   # packages/core/src/generated/contract-types.ts and
