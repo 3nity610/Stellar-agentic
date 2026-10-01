@@ -226,7 +226,9 @@ pub fn extend_instance_ttl(env: &Env) {
 
 
 pub fn extend_persistent_ttl(env: &Env, key: &DataKey) {
-    env.storage().persistent().extend_ttl(key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+    if env.storage().persistent().has(key) {
+        env.storage().persistent().extend_ttl(key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+    }
 }
 
 #[contract]
@@ -810,21 +812,157 @@ impl PaymentChannel {
         );
     }
 
+    // ── Multisig Admin Quorum ────────────────────────────────────────────────
+
+    /// Configure the multi-sig admin owners, threshold (k-of-n), and proposal
+    /// validity window (in ledgers). Modelled on CircuitBreaker's trusted nodes.
+    ///
+    /// Single-owner mode is threshold = 1.
+    pub fn set_multisig_config(
+        env: Env,
+        caller: Address,
+        owners: Vec<Address>,
+        threshold: u32,
+        propose_window_ledgers: u32,
+    ) {
+        caller.require_auth();
+
+        if threshold == 0 {
+            panic!("threshold must be positive");
+        }
+        if threshold > owners.len() {
+            panic!("threshold cannot exceed owner count");
+        }
+        if propose_window_ledgers == 0 {
+            panic!("propose window must be positive");
+        }
+
+        let current_threshold = Self::get_multisig_threshold(env.clone());
+        let current_owners = Self::get_multisig_owners(env.clone());
+
+        if current_threshold > 1 && !current_owners.is_empty() {
+            if !current_owners.contains(&caller) {
+                panic!("not an admin owner");
+            }
+            let key = symbol_short!("prop_ms");
+            let proposals: Map<Address, u32> = env
+                .storage()
+                .instance()
+                .get(&key)
+                .unwrap_or(Map::new(&env));
+            let count = Self::count_valid_proposals(
+                &env,
+                &proposals,
+                &current_owners,
+                Self::get_multisig_propose_window(env.clone()),
+            );
+            if count < current_threshold {
+                panic!("quorum not reached");
+            }
+            env.storage().instance().remove(&key);
+        } else if !current_owners.is_empty() && !current_owners.contains(&caller) {
+            panic!("not an admin owner");
+        }
+
+        env.storage()
+            .instance()
+            .set(&symbol_short!("ms_own"), &owners);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("ms_thresh"), &threshold);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("ms_win"), &propose_window_ledgers);
+
+        env.events().publish(
+            (symbol_short!("admin"), symbol_short!("ms_cfg")),
+            (owners, threshold),
+        );
+    }
+
+    /// An admin owner proposes rotating or configuring multi-sig owners and threshold.
+    pub fn propose_multisig_config(env: Env, owner: Address) {
+        owner.require_auth();
+        Self::require_multisig_owner(&env, &owner);
+
+        let key = symbol_short!("prop_ms");
+        let mut proposals: Map<Address, u32> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(Map::new(&env));
+        proposals.set(owner.clone(), env.ledger().sequence());
+        env.storage().instance().set(&key, &proposals);
+
+        env.events().publish(
+            (symbol_short!("admin"), symbol_short!("prop_ms")),
+            owner,
+        );
+    }
+
+    /// An admin owner records their approval to set the CircuitBreaker.
+    pub fn propose_circuit_breaker(env: Env, owner: Address, circuit_breaker: Address) {
+        owner.require_auth();
+        Self::require_multisig_owner(&env, &owner);
+
+        let key = (symbol_short!("cb"), circuit_breaker.clone());
+        let mut proposals: Map<Address, u32> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(Map::new(&env));
+        proposals.set(owner.clone(), env.ledger().sequence());
+        env.storage().instance().set(&key, &proposals);
+
+        env.events().publish(
+            (symbol_short!("admin"), symbol_short!("prop_cb")),
+            (owner, circuit_breaker),
+        );
+    }
+
     /// Wire this channel contract up to a deployed CircuitBreaker contract.
-    /// The first caller to set it becomes the admin for future rotations.
+    /// In single-owner mode (default), executes with 1 signature.
+    /// In multi-sig mode, gated on reaching threshold approvals.
     pub fn set_circuit_breaker(env: Env, admin: Address, circuit_breaker: Address) {
         extend_instance_ttl(&env);
         admin.require_auth();
 
-        let admin_key = symbol_short!("cb_admin");
-        match env.storage().instance().get::<_, Address>(&admin_key) {
-            Some(stored_admin) => {
-                if stored_admin != admin {
-                    panic!("not the circuit breaker admin");
-                }
+        let owners = Self::get_multisig_owners(env.clone());
+        let threshold = Self::get_multisig_threshold(env.clone());
+
+        if !owners.is_empty() {
+            if !owners.contains(&admin) {
+                panic!("not an admin owner");
             }
-            None => {
-                env.storage().instance().set(&admin_key, &admin);
+            if threshold > 1 {
+                let key = (symbol_short!("cb"), circuit_breaker.clone());
+                let proposals: Map<Address, u32> = env
+                    .storage()
+                    .instance()
+                    .get(&key)
+                    .unwrap_or(Map::new(&env));
+                let count = Self::count_valid_proposals(
+                    &env,
+                    &proposals,
+                    &owners,
+                    Self::get_multisig_propose_window(env.clone()),
+                );
+                if count < threshold {
+                    panic!("quorum not reached");
+                }
+                env.storage().instance().remove(&key);
+            }
+        } else {
+            let admin_key = symbol_short!("cb_admin");
+            match env.storage().instance().get::<_, Address>(&admin_key) {
+                Some(stored_admin) => {
+                    if stored_admin != admin {
+                        panic!("not the circuit breaker admin");
+                    }
+                }
+                None => {
+                    env.storage().instance().set(&admin_key, &admin);
+                }
             }
         }
 
@@ -833,23 +971,69 @@ impl PaymentChannel {
             .set(&symbol_short!("cb"), &circuit_breaker);
     }
 
-    /// Wire this channel contract up to a deployed `PriceOracle` contract,
-    /// used by `pay_with_conversion` as the trusted reference price for
-    /// cross-asset conversions. The first caller to set it becomes the
-    /// admin for future rotations, mirroring `set_circuit_breaker`.
+    /// An admin owner records their approval to set the PriceOracle.
+    pub fn propose_price_oracle(env: Env, owner: Address, price_oracle: Address) {
+        owner.require_auth();
+        Self::require_multisig_owner(&env, &owner);
+
+        let key = (symbol_short!("po"), price_oracle.clone());
+        let mut proposals: Map<Address, u32> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(Map::new(&env));
+        proposals.set(owner.clone(), env.ledger().sequence());
+        env.storage().instance().set(&key, &proposals);
+
+        env.events().publish(
+            (symbol_short!("admin"), symbol_short!("prop_po")),
+            (owner, price_oracle),
+        );
+    }
+
+    /// Wire this channel contract up to a deployed `PriceOracle` contract.
+    /// In single-owner mode (default), executes with 1 signature.
+    /// In multi-sig mode, gated on reaching threshold approvals.
     pub fn set_price_oracle(env: Env, admin: Address, price_oracle: Address) {
         extend_instance_ttl(&env);
         admin.require_auth();
 
-        let admin_key = symbol_short!("po_admin");
-        match env.storage().instance().get::<_, Address>(&admin_key) {
-            Some(stored_admin) => {
-                if stored_admin != admin {
-                    panic!("not the price oracle admin");
-                }
+        let owners = Self::get_multisig_owners(env.clone());
+        let threshold = Self::get_multisig_threshold(env.clone());
+
+        if !owners.is_empty() {
+            if !owners.contains(&admin) {
+                panic!("not an admin owner");
             }
-            None => {
-                env.storage().instance().set(&admin_key, &admin);
+            if threshold > 1 {
+                let key = (symbol_short!("po"), price_oracle.clone());
+                let proposals: Map<Address, u32> = env
+                    .storage()
+                    .instance()
+                    .get(&key)
+                    .unwrap_or(Map::new(&env));
+                let count = Self::count_valid_proposals(
+                    &env,
+                    &proposals,
+                    &owners,
+                    Self::get_multisig_propose_window(env.clone()),
+                );
+                if count < threshold {
+                    panic!("quorum not reached");
+                }
+                env.storage().instance().remove(&key);
+            }
+        } else {
+            let admin_key = symbol_short!("po_admin");
+            match env.storage().instance().get::<_, Address>(&admin_key) {
+                Some(stored_admin) => {
+                    if stored_admin != admin {
+                        panic!("not the price oracle admin");
+                    }
+                }
+                None => {
+                    env.storage().instance().set(&admin_key, &admin);
+                }
             }
         }
 
@@ -858,27 +1042,157 @@ impl PaymentChannel {
             .set(&symbol_short!("po"), &price_oracle);
     }
 
-    /// Wire this channel contract up to a deployed AMM/DEX contract, used
-    /// by `pay_with_conversion` to actually execute cross-asset swaps. The
-    /// first caller to set it becomes the admin for future rotations,
-    /// mirroring `set_circuit_breaker`.
+    /// An admin owner records their approval to set the AMM contract.
+    pub fn propose_amm(env: Env, owner: Address, amm: Address) {
+        owner.require_auth();
+        Self::require_multisig_owner(&env, &owner);
+
+        let key = (symbol_short!("amm"), amm.clone());
+        let mut proposals: Map<Address, u32> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(Map::new(&env));
+        proposals.set(owner.clone(), env.ledger().sequence());
+        env.storage().instance().set(&key, &proposals);
+
+        env.events().publish(
+            (symbol_short!("admin"), symbol_short!("prop_amm")),
+            (owner, amm),
+        );
+    }
+
+    /// Wire this channel contract up to a deployed AMM/DEX contract.
+    /// In single-owner mode (default), executes with 1 signature.
+    /// In multi-sig mode, gated on reaching threshold approvals.
     pub fn set_amm(env: Env, admin: Address, amm: Address) {
         extend_instance_ttl(&env);
         admin.require_auth();
 
-        let admin_key = symbol_short!("amm_admin");
-        match env.storage().instance().get::<_, Address>(&admin_key) {
-            Some(stored_admin) => {
-                if stored_admin != admin {
-                    panic!("not the amm admin");
-                }
+        let owners = Self::get_multisig_owners(env.clone());
+        let threshold = Self::get_multisig_threshold(env.clone());
+
+        if !owners.is_empty() {
+            if !owners.contains(&admin) {
+                panic!("not an admin owner");
             }
-            None => {
-                env.storage().instance().set(&admin_key, &admin);
+            if threshold > 1 {
+                let key = (symbol_short!("amm"), amm.clone());
+                let proposals: Map<Address, u32> = env
+                    .storage()
+                    .instance()
+                    .get(&key)
+                    .unwrap_or(Map::new(&env));
+                let count = Self::count_valid_proposals(
+                    &env,
+                    &proposals,
+                    &owners,
+                    Self::get_multisig_propose_window(env.clone()),
+                );
+                if count < threshold {
+                    panic!("quorum not reached");
+                }
+                env.storage().instance().remove(&key);
+            }
+        } else {
+            let admin_key = symbol_short!("amm_admin");
+            match env.storage().instance().get::<_, Address>(&admin_key) {
+                Some(stored_admin) => {
+                    if stored_admin != admin {
+                        panic!("not the amm admin");
+                    }
+                }
+                None => {
+                    env.storage().instance().set(&admin_key, &admin);
+                }
             }
         }
 
         env.storage().instance().set(&symbol_short!("amm"), &amm);
+    }
+
+    pub fn get_multisig_owners(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("ms_own"))
+            .unwrap_or(Vec::new(&env))
+    }
+
+    pub fn get_multisig_threshold(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("ms_thresh"))
+            .unwrap_or(1)
+    }
+
+    pub fn get_multisig_propose_window(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("ms_win"))
+            .unwrap_or(DEFAULT_DISPUTE_LEDGERS)
+    }
+
+    pub fn get_circuit_breaker_quorum(env: Env, circuit_breaker: Address) -> u32 {
+        let owners = Self::get_multisig_owners(env.clone());
+        let window = Self::get_multisig_propose_window(env.clone());
+        let key = (symbol_short!("cb"), circuit_breaker);
+        let proposals: Map<Address, u32> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(Map::new(&env));
+        Self::count_valid_proposals(&env, &proposals, &owners, window)
+    }
+
+    pub fn get_price_oracle_quorum(env: Env, price_oracle: Address) -> u32 {
+        let owners = Self::get_multisig_owners(env.clone());
+        let window = Self::get_multisig_propose_window(env.clone());
+        let key = (symbol_short!("po"), price_oracle);
+        let proposals: Map<Address, u32> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(Map::new(&env));
+        Self::count_valid_proposals(&env, &proposals, &owners, window)
+    }
+
+    pub fn get_amm_quorum(env: Env, amm: Address) -> u32 {
+        let owners = Self::get_multisig_owners(env.clone());
+        let window = Self::get_multisig_propose_window(env.clone());
+        let key = (symbol_short!("amm"), amm);
+        let proposals: Map<Address, u32> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(Map::new(&env));
+        Self::count_valid_proposals(&env, &proposals, &owners, window)
+    }
+
+    fn require_multisig_owner(env: &Env, owner: &Address) {
+        let owners = Self::get_multisig_owners(env.clone());
+        if !owners.contains(owner) {
+            panic!("not an admin owner");
+        }
+    }
+
+    fn count_valid_proposals(
+        env: &Env,
+        proposals: &Map<Address, u32>,
+        owners: &Vec<Address>,
+        window: u32,
+    ) -> u32 {
+        let current_ledger = env.ledger().sequence();
+        let cutoff = current_ledger.saturating_sub(window);
+
+        let mut count = 0u32;
+        for owner in owners.iter() {
+            if let Some(proposed_at) = proposals.get(owner) {
+                if proposed_at >= cutoff {
+                    count += 1;
+                }
+            }
+        }
+        count
     }
 
     // ── Vouchers ─────────────────────────────────────────────────────────────
@@ -1306,9 +1620,34 @@ impl PaymentChannel {
 
     // ── Solvency proofs (ZK) ─────────────────────────────────────────────────
 
+    /// An admin owner records their approval to set the Groth16 verifying key.
+    pub fn propose_solvency_vk(env: Env, owner: Address, vk: SolvencyVerifyingKey) {
+        owner.require_auth();
+        Self::require_multisig_owner(&env, &owner);
+
+        if vk.gamma_abc_g1.len() != 3 {
+            panic!("solvency vk must have exactly 3 gamma_abc_g1 entries");
+        }
+
+        let key = symbol_short!("prop_svk");
+        let mut proposals: Map<Address, u32> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(Map::new(&env));
+        proposals.set(owner.clone(), env.ledger().sequence());
+        env.storage().instance().set(&key, &proposals);
+
+        env.events().publish(
+            (symbol_short!("admin"), symbol_short!("prop_svk")),
+            owner,
+        );
+    }
+
     /// Admin-only: install (or rotate) the Groth16 verifying key used by
-    /// `verify_solvency_proof`. The first caller to set it becomes the
-    /// admin for future rotations, mirroring `set_circuit_breaker`.
+    /// `verify_solvency_proof`.
+    /// In single-owner mode (default), executes with 1 signature.
+    /// In multi-sig mode, gated on reaching threshold approvals.
     pub fn set_solvency_vk(env: Env, admin: Address, vk: SolvencyVerifyingKey) {
         extend_instance_ttl(&env);
         admin.require_auth();
@@ -1317,15 +1656,42 @@ impl PaymentChannel {
             panic!("solvency vk must have exactly 3 gamma_abc_g1 entries");
         }
 
-        let admin_key = symbol_short!("sv_admin");
-        match env.storage().instance().get::<_, Address>(&admin_key) {
-            Some(stored_admin) => {
-                if stored_admin != admin {
-                    panic!("not the solvency vk admin");
-                }
+        let owners = Self::get_multisig_owners(env.clone());
+        let threshold = Self::get_multisig_threshold(env.clone());
+
+        if !owners.is_empty() {
+            if !owners.contains(&admin) {
+                panic!("not an admin owner");
             }
-            None => {
-                env.storage().instance().set(&admin_key, &admin);
+            if threshold > 1 {
+                let key = symbol_short!("prop_svk");
+                let proposals: Map<Address, u32> = env
+                    .storage()
+                    .instance()
+                    .get(&key)
+                    .unwrap_or(Map::new(&env));
+                let count = Self::count_valid_proposals(
+                    &env,
+                    &proposals,
+                    &owners,
+                    Self::get_multisig_propose_window(env.clone()),
+                );
+                if count < threshold {
+                    panic!("quorum not reached");
+                }
+                env.storage().instance().remove(&key);
+            }
+        } else {
+            let admin_key = symbol_short!("sv_admin");
+            match env.storage().instance().get::<_, Address>(&admin_key) {
+                Some(stored_admin) => {
+                    if stored_admin != admin {
+                        panic!("not the solvency vk admin");
+                    }
+                }
+                None => {
+                    env.storage().instance().set(&admin_key, &admin);
+                }
             }
         }
 
@@ -1740,3 +2106,6 @@ mod test;
 
 #[cfg(test)]
 mod test_voucher;
+
+#[cfg(test)]
+mod test_multisig;

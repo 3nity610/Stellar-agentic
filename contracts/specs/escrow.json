@@ -329,7 +329,21 @@
   },
   {
     "function_v0": {
-      "doc": "Wire this escrow contract up to a deployed CircuitBreaker contract.\\nThe first caller to set it becomes the admin for future rotations.",
+      "doc": "",
+      "name": "get_multisig_owners",
+      "inputs": [],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": "address"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Wire this escrow contract up to a deployed CircuitBreaker contract.\\nIn single-owner mode (default), executes with 1 signature.\\nIn multi-sig mode, gated on reaching threshold approvals.",
       "name": "set_circuit_breaker",
       "inputs": [
         {
@@ -344,6 +358,94 @@
         }
       ],
       "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "",
+      "name": "set_multisig_config",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "caller",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "owners",
+          "type_": {
+            "vec": {
+              "element_type": "address"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "threshold",
+          "type_": "u32"
+        },
+        {
+          "doc": "",
+          "name": "propose_window_ledgers",
+          "type_": "u32"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "",
+      "name": "get_multisig_threshold",
+      "inputs": [],
+      "outputs": [
+        "u32"
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "",
+      "name": "propose_circuit_breaker",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "circuit_breaker",
+          "type_": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "",
+      "name": "get_circuit_breaker_quorum",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "circuit_breaker",
+          "type_": "address"
+        }
+      ],
+      "outputs": [
+        "u32"
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "",
+      "name": "get_multisig_propose_window",
+      "inputs": [],
+      "outputs": [
+        "u32"
+      ]
     }
   }
 ]

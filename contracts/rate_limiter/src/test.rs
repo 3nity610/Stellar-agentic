@@ -3,8 +3,32 @@
 use crate::{RateLimit, RateLimiter, RateLimiterClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
-    Address, Env,
+    Address, Env, Vec,
 };
+
+fn total_hourly_spend(limit: &RateLimit) -> i128 {
+    let mut total = 0;
+    for i in 0..limit.hourly_buckets.len() {
+        total += limit.hourly_buckets.get(i).unwrap().spend;
+    }
+    total
+}
+
+fn total_daily_spend(limit: &RateLimit) -> i128 {
+    let mut total = 0;
+    for i in 0..limit.daily_buckets.len() {
+        total += limit.daily_buckets.get(i).unwrap().spend;
+    }
+    total
+}
+
+fn total_hourly_txs(limit: &RateLimit) -> u32 {
+    let mut total = 0;
+    for i in 0..limit.hourly_buckets.len() {
+        total += limit.hourly_buckets.get(i).unwrap().tx_count;
+    }
+    total
+}
 
 const LEDGERS_PER_HOUR: u32 = 720;
 const LEDGERS_PER_DAY: u32 = 17_280;
@@ -21,9 +45,10 @@ fn setup() -> (Env, RateLimiterClient<'static>, Address, Address) {
 
 fn advance_ledgers(env: &Env, by: u32) {
     let seq = env.ledger().sequence();
+    let protocol = env.ledger().protocol_version();
     env.ledger().set(LedgerInfo {
         timestamp: env.ledger().timestamp(),
-        protocol_version: 22,
+        protocol_version: protocol,
         sequence_number: seq + by,
         network_id: [0; 32],
         base_reserve: 10,
@@ -89,9 +114,9 @@ fn set_limits_succeeds_and_initializes_zeroed_state() {
     assert_eq!(limit.max_per_hour, 500);
     assert_eq!(limit.max_per_day, 2000);
     assert_eq!(limit.max_txs_per_hour, 5);
-    assert_eq!(limit.hourly_spend, 0);
-    assert_eq!(limit.daily_spend, 0);
-    assert_eq!(limit.hourly_tx_count, 0);
+    assert_eq!(total_hourly_spend(&limit), 0);
+    assert_eq!(total_daily_spend(&limit), 0);
+    assert_eq!(total_hourly_txs(&limit), 0);
     assert!(limit.active);
 }
 
@@ -214,9 +239,9 @@ fn record_payment_accumulates_spend_and_tx_count() {
     client.record_payment(&owner, &agent, &20);
 
     let limit: RateLimit = client.get_limits(&agent);
-    assert_eq!(limit.hourly_spend, 50);
-    assert_eq!(limit.daily_spend, 50);
-    assert_eq!(limit.hourly_tx_count, 2);
+    assert_eq!(total_hourly_spend(&limit), 50);
+    assert_eq!(total_daily_spend(&limit), 50);
+    assert_eq!(total_hourly_txs(&limit), 2);
 }
 
 #[test]
@@ -234,8 +259,8 @@ fn hourly_window_resets_after_720_ledgers() {
     client.record_payment(&owner, &agent, &100);
     client.record_payment(&owner, &agent, &100);
     let before: RateLimit = client.get_limits(&agent);
-    assert_eq!(before.hourly_spend, 200);
-    assert_eq!(before.hourly_tx_count, 2);
+    assert_eq!(total_hourly_spend(&before), 200);
+    assert_eq!(total_hourly_txs(&before), 2);
 
     advance_ledgers(&env, LEDGERS_PER_HOUR);
 
@@ -243,8 +268,8 @@ fn hourly_window_resets_after_720_ledgers() {
     client.record_payment(&owner, &agent, &1);
 
     let after: RateLimit = client.get_limits(&agent);
-    assert_eq!(after.hourly_spend, 1);
-    assert_eq!(after.hourly_tx_count, 1);
+    assert_eq!(total_hourly_spend(&after), 1);
+    assert_eq!(total_hourly_txs(&after), 1);
 }
 
 #[test]
@@ -254,14 +279,14 @@ fn daily_window_resets_after_17280_ledgers() {
 
     client.record_payment(&owner, &agent, &500);
     let before: RateLimit = client.get_limits(&agent);
-    assert_eq!(before.daily_spend, 500);
+    assert_eq!(total_daily_spend(&before), 500);
 
     advance_ledgers(&env, LEDGERS_PER_DAY);
 
     client.record_payment(&owner, &agent, &1);
 
     let after: RateLimit = client.get_limits(&agent);
-    assert_eq!(after.daily_spend, 1);
+    assert_eq!(total_daily_spend(&after), 1);
 }
 
 #[test]
@@ -274,8 +299,8 @@ fn hourly_window_does_not_reset_before_720_ledgers() {
     client.record_payment(&owner, &agent, &50);
 
     let limit: RateLimit = client.get_limits(&agent);
-    assert_eq!(limit.hourly_spend, 150);
-    assert_eq!(limit.hourly_tx_count, 2);
+    assert_eq!(total_hourly_spend(&limit), 150);
+    assert_eq!(total_hourly_txs(&limit), 2);
 }
 
 #[test]
@@ -369,4 +394,203 @@ fn is_active_reflects_active_flag_after_kill() {
     set_default_limits(&client, &owner, &agent);
     client.kill_agent(&owner, &agent);
     assert!(!client.is_active(&agent));
+}
+
+struct RateLimiterHarness {
+    env: Env,
+    client: RateLimiterClient<'static>,
+    owner: Address,
+    agent: Address,
+    owners: [Address; 3],
+    impostor: Address,
+}
+
+fn setup_rate_limiter() -> RateLimiterHarness {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(RateLimiter, ());
+    let client = RateLimiterClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let owners = [
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+    ];
+    let impostor = Address::generate(&env);
+
+    client.set_limits(&owner, &agent, &100, &1_000, &10_000, &10);
+
+    RateLimiterHarness {
+        env,
+        client,
+        owner,
+        agent,
+        owners,
+        impostor,
+    }
+}
+
+// ── Single Owner Mode (Threshold = 1) ────────────────────────────────────────
+
+#[test]
+fn single_owner_kill_agent_executes_immediately() {
+    let h = setup_rate_limiter();
+
+    assert!(h.client.is_active(&h.agent));
+
+    // Owner kills agent with 1 signature
+    h.client.kill_agent(&h.owner, &h.agent);
+
+    assert!(!h.client.is_active(&h.agent));
+}
+
+#[test]
+#[should_panic(expected = "not the limit owner")]
+fn single_owner_non_owner_cannot_kill() {
+    let h = setup_rate_limiter();
+    h.client.kill_agent(&h.impostor, &h.agent);
+}
+
+// ── Multi-sig Quorum, Proposal & Execution ───────────────────────────────────
+
+#[test]
+fn multisig_kill_agent_reaches_quorum() {
+    let h = setup_rate_limiter();
+
+    let mut owners_vec = Vec::new(&h.env);
+    owners_vec.push_back(h.owners[0].clone());
+    owners_vec.push_back(h.owners[1].clone());
+    owners_vec.push_back(h.owners[2].clone());
+
+    // Configure 2-of-3 multisig with 500 ledgers window
+    h.client
+        .set_agent_multisig(&h.owner, &h.agent, &owners_vec, &2, &500);
+
+    assert_eq!(h.client.get_kill_agent_quorum(&h.agent), 0);
+
+    // Owner 0 proposes
+    h.client.propose_kill_agent(&h.owners[0], &h.agent);
+    assert_eq!(h.client.get_kill_agent_quorum(&h.agent), 1);
+
+    // Owner 1 proposes
+    h.client.propose_kill_agent(&h.owners[1], &h.agent);
+    assert_eq!(h.client.get_kill_agent_quorum(&h.agent), 2);
+
+    // Execution succeeds
+    h.client.kill_agent(&h.owners[0], &h.agent);
+    assert!(!h.client.is_active(&h.agent));
+}
+
+#[test]
+#[should_panic(expected = "quorum not reached")]
+fn multisig_kill_agent_fails_without_quorum() {
+    let h = setup_rate_limiter();
+
+    let mut owners_vec = Vec::new(&h.env);
+    owners_vec.push_back(h.owners[0].clone());
+    owners_vec.push_back(h.owners[1].clone());
+
+    // 2-of-2 multisig
+    h.client
+        .set_agent_multisig(&h.owner, &h.agent, &owners_vec, &2, &500);
+
+    // Only 1 owner proposes
+    h.client.propose_kill_agent(&h.owners[0], &h.agent);
+    assert_eq!(h.client.get_kill_agent_quorum(&h.agent), 1);
+
+    // Must panic
+    h.client.kill_agent(&h.owners[0], &h.agent);
+}
+
+#[test]
+fn duplicate_kill_agent_proposals_count_once() {
+    let h = setup_rate_limiter();
+
+    let mut owners_vec = Vec::new(&h.env);
+    owners_vec.push_back(h.owners[0].clone());
+    owners_vec.push_back(h.owners[1].clone());
+
+    h.client
+        .set_agent_multisig(&h.owner, &h.agent, &owners_vec, &2, &500);
+
+    h.client.propose_kill_agent(&h.owners[0], &h.agent);
+    h.client.propose_kill_agent(&h.owners[0], &h.agent);
+
+    assert_eq!(h.client.get_kill_agent_quorum(&h.agent), 1);
+}
+
+#[test]
+#[should_panic(expected = "quorum not reached")]
+fn expired_kill_agent_proposals_fail() {
+    let h = setup_rate_limiter();
+
+    let mut owners_vec = Vec::new(&h.env);
+    owners_vec.push_back(h.owners[0].clone());
+    owners_vec.push_back(h.owners[1].clone());
+
+    h.client
+        .set_agent_multisig(&h.owner, &h.agent, &owners_vec, &2, &100);
+
+    // Propose at ledger 0
+    h.client.propose_kill_agent(&h.owners[0], &h.agent);
+
+    // Advance ledger past window
+    h.env.ledger().set(LedgerInfo {
+        timestamp: 10_000,
+        protocol_version: h.env.ledger().protocol_version(),
+        sequence_number: 150,
+        network_id: Default::default(),
+        base_reserve: 10,
+        min_temp_entry_ttl: 10,
+        min_persistent_entry_ttl: 10,
+        max_entry_ttl: 100_000,
+    });
+
+    // Owner 1 proposes at ledger 150
+    h.client.propose_kill_agent(&h.owners[1], &h.agent);
+
+    // Owner 0's proposal expired, quorum is 1 < 2
+    assert_eq!(h.client.get_kill_agent_quorum(&h.agent), 1);
+
+    h.client.kill_agent(&h.owners[1], &h.agent);
+}
+
+#[test]
+#[should_panic(expected = "quorum not reached")]
+fn already_killed_agent_action_cannot_be_replayed() {
+    let h = setup_rate_limiter();
+
+    let mut owners_vec = Vec::new(&h.env);
+    owners_vec.push_back(h.owners[0].clone());
+    owners_vec.push_back(h.owners[1].clone());
+
+    h.client
+        .set_agent_multisig(&h.owner, &h.agent, &owners_vec, &2, &500);
+
+    h.client.propose_kill_agent(&h.owners[0], &h.agent);
+    h.client.propose_kill_agent(&h.owners[1], &h.agent);
+
+    // Executes successfully
+    h.client.kill_agent(&h.owners[0], &h.agent);
+
+    // Replay attempt panics because proposals were consumed
+    h.client.kill_agent(&h.owners[0], &h.agent);
+}
+
+#[test]
+#[should_panic(expected = "not a multisig owner")]
+fn non_multisig_owner_cannot_propose_kill() {
+    let h = setup_rate_limiter();
+
+    let mut owners_vec = Vec::new(&h.env);
+    owners_vec.push_back(h.owners[0].clone());
+    owners_vec.push_back(h.owners[1].clone());
+
+    h.client
+        .set_agent_multisig(&h.owner, &h.agent, &owners_vec, &2, &500);
+
+    h.client.propose_kill_agent(&h.impostor, &h.agent);
 }
