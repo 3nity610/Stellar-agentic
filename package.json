@@ -22,13 +22,26 @@
     "contract-types:generate": "tsx scripts/generate-contract-types.ts",
     "contract-types:check": "tsx scripts/generate-contract-types.ts --check",
     "docs:api": "tsx scripts/check-public-api.ts && tsx scripts/generate-api-docs.ts",
-    "docs:api:check": "tsx scripts/check-public-api.ts --check && tsx scripts/generate-api-docs.ts --check"
+    "docs:api:check": "tsx scripts/check-public-api.ts --check && tsx scripts/generate-api-docs.ts --check",
+    "prepare": "husky install"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
     "turbo": "^2.0.0",
     "typedoc": "^0.28.20",
-    "typedoc-plugin-markdown": "^4.13.0"
+    "typedoc-plugin-markdown": "^4.13.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{py}": [
+      "ruff check --fix",
+      "ruff format"
+    ]
   },
   "engines": {
     "node": ">=18"

@@ -1,9 +1,8 @@
 import { motion } from 'framer-motion';
-import { Plus, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Plus, Clock, CheckCircle2, AlertCircle, Wallet } from 'lucide-react';
 import { Badge, Card, SectionHeader, AddressChip } from '../components/ui/index.js';
-import { PanelBoundary } from '../components/dashboard/PanelBoundary.js';
-import { useJobsPanel } from '../lib/chain/panels.js';
-import type { Job } from '../lib/chain/types.js';
+import { MOCK_JOBS, type Job } from '../lib/mockData.js';
+import { useWallet } from '../lib/walletContext.js';
 
 function JobStatusBadge({ status }: { status: Job['status'] }) {
   const map: Record<Job['status'], { label: string; variant: 'success' | 'warning' | 'danger' | 'neutral' | 'info' }> = {
@@ -19,10 +18,21 @@ function JobStatusBadge({ status }: { status: Job['status'] }) {
 }
 
 export function JobsPage() {
-  const panel = useJobsPanel();
-  const jobs = panel.data ?? [];
-  const open = jobs.filter((j) => j.status === 'open').length;
-  const pending = jobs.filter((j) => j.status === 'pending_release').length;
+  const { isConnected, connect } = useWallet();
+  const open = MOCK_JOBS.filter((j) => j.status === 'open').length;
+  const pending = MOCK_JOBS.filter((j) => j.status === 'pending_release').length;
+
+  const handleWriteAction = async (action: () => void) => {
+    if (!isConnected) {
+      try {
+        await connect();
+      } catch (err) {
+        console.error('Failed to connect wallet:', err);
+        return;
+      }
+    }
+    action();
+  };
 
   return (
     <div className="flex-1 overflow-auto">
@@ -31,7 +41,13 @@ export function JobsPage() {
           <h1 className="font-display text-xl font-semibold text-sa-text">Escrow Jobs</h1>
           <p className="text-xs text-sa-text-dim mt-0.5">Agent-to-agent work delegation with trustless payment</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 text-sm">
+        <button
+          className="btn-primary flex items-center gap-2 text-sm"
+          onClick={() => handleWriteAction(() => {
+            console.log('Create job clicked');
+            // TODO: Implement job creation with wallet signing
+          })}
+        >
           <Plus size={14} />
           Create Job
         </button>
@@ -104,46 +120,71 @@ export function JobsPage() {
                           </div>
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-display text-xl font-semibold text-sa-green">
-                          ${job.amount}
-                        </p>
-                        <p className="text-xs text-sa-text-dim">{job.asset}</p>
-                        <div className="flex items-center gap-1 mt-2 justify-end text-xs text-sa-text-dim">
-                          <Clock size={10} />
-                          {job.deadline}
-                        </div>
+                      <div>
+                        <span className="label">Worker </span>
+                        {job.workerName ? (
+                          <>
+                            <span className="text-sa-text">{job.workerName}</span>
+                            <span className="ml-1"><AddressChip address={job.worker!} /></span>
+                          </>
+                        ) : (
+                          <span className="text-sa-text-dim italic">Not yet assigned</span>
+                        )}
                       </div>
                     </div>
 
-                    {/* Actions */}
-                    {job.status === 'pending_release' && (
-                      <div className="flex gap-2 mt-3 pt-3 border-t border-sa-border">
-                        <button className="btn-primary text-xs py-1.5 flex items-center gap-1.5">
-                          <CheckCircle2 size={12} />
-                          Release Payment
-                        </button>
-                        <button className="btn-secondary text-xs py-1.5 flex items-center gap-1.5 text-sa-red border-sa-red/30 hover:bg-sa-red/5">
-                          <AlertCircle size={12} />
-                          Dispute
-                        </button>
-                      </div>
-                    )}
-                    {job.status === 'open' && (
-                      <div className="flex gap-2 mt-3 pt-3 border-t border-sa-border">
-                        <button className="btn-secondary text-xs py-1.5">
-                          Accept Job
-                        </button>
-                        <button className="btn-secondary text-xs py-1.5 text-sa-red border-sa-red/30">
-                          Cancel & Refund
-                        </button>
-                      </div>
-                    )}
-                  </motion.div>
-                ))}
-              </div>
-            )}
-          </PanelBoundary>
+                {/* Actions */}
+                {job.status === 'pending_release' && (
+                  <div className="flex gap-2 mt-3 pt-3 border-t border-sa-border">
+                    <button
+                      className="btn-primary text-xs py-1.5 flex items-center gap-1.5"
+                      onClick={() => handleWriteAction(() => {
+                        console.log('Release payment for job:', job.id);
+                        // TODO: Implement payment release with wallet signing
+                      })}
+                    >
+                      {!isConnected && <Wallet size={12} />}
+                      <CheckCircle2 size={12} />
+                      {isConnected ? 'Release Payment' : 'Connect & Release'}
+                    </button>
+                    <button
+                      className="btn-secondary text-xs py-1.5 flex items-center gap-1.5 text-sa-red border-sa-red/30 hover:bg-sa-red/5"
+                      onClick={() => handleWriteAction(() => {
+                        console.log('Dispute job:', job.id);
+                        // TODO: Implement dispute with wallet signing
+                      })}
+                    >
+                      <AlertCircle size={12} />
+                      Dispute
+                    </button>
+                  </div>
+                )}
+                {job.status === 'open' && (
+                  <div className="flex gap-2 mt-3 pt-3 border-t border-sa-border">
+                    <button
+                      className="btn-secondary text-xs py-1.5"
+                      onClick={() => handleWriteAction(() => {
+                        console.log('Accept job:', job.id);
+                        // TODO: Implement job acceptance with wallet signing
+                      })}
+                    >
+                      {!isConnected && <Wallet size={12} className="inline mr-1" />}
+                      {isConnected ? 'Accept Job' : 'Connect & Accept'}
+                    </button>
+                    <button
+                      className="btn-secondary text-xs py-1.5 text-sa-red border-sa-red/30"
+                      onClick={() => handleWriteAction(() => {
+                        console.log('Cancel & refund job:', job.id);
+                        // TODO: Implement cancellation with wallet signing
+                      })}
+                    >
+                      Cancel & Refund
+                    </button>
+                  </div>
+                )}
+              </motion.div>
+            ))}
+          </div>
         </Card>
       </div>
     </div>
