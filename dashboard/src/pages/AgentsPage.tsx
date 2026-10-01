@@ -112,12 +112,14 @@ function AgentCard({ agent, onSelect }: { agent: Agent; onSelect: (a: Agent) => 
           <button
             className="w-7 h-7 rounded-md bg-sa-bg border border-sa-border hover:border-sa-accent/40 flex items-center justify-center transition-colors"
             onClick={(e) => e.stopPropagation()}
+            aria-label="Toggle agent power"
           >
             <Power size={12} className="text-sa-text-dim" />
           </button>
           <button
             className="w-7 h-7 rounded-md bg-sa-bg border border-sa-border hover:border-sa-accent/40 flex items-center justify-center transition-colors"
             onClick={(e) => e.stopPropagation()}
+            aria-label="Agent settings"
           >
             <Settings2 size={12} className="text-sa-text-dim" />
           </button>

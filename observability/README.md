@@ -55,6 +55,28 @@ new SorobanEventIndexer({
 
 Without OTLP packages installed, the indexer falls back to in-memory telemetry (suitable for unit tests).
 
+## Scraping the indexer directly
+
+The indexer needs no OpenTelemetry pipeline to be observable. Its query server
+serves Prometheus text at `/metrics` (and a JSON summary at `/health`) on the
+same port as the audit API, default `3001`:
+
+```console
+$ curl -s localhost:3001/metrics | grep lag_ledgers
+# HELP stellaragent_indexer_lag_ledgers Ledgers between the latest closed ledger reported by RPC and the highest ledger committed to the store.
+# TYPE stellaragent_indexer_lag_ledgers gauge
+stellaragent_indexer_lag_ledgers 1
+```
+
+`prometheus.yml` in this directory already declares a `stellaragent-indexer`
+scrape job targeting `host.docker.internal:3001`, so `docker compose up` plus a
+running `stellaragent-indexer tail` is the whole setup. If the indexer is not
+running the target shows as down, which is the correct answer rather than a
+silent gap.
+
+The full metric list, the `/health` payload, and worked alert rules are in
+[packages/indexer/README.md](../packages/indexer/README.md#observability).
+
 ## Trace correlation
 
 The SDK registers `payment_id` → transaction hash mappings in-process. When the indexer decodes a payment event, it looks up the same `payment_id` and attaches it to decode spans. For multi-process deployments, both services should export to the same OTLP backend so traces can be joined by `transaction.hash` and `trace.payment_id`.
