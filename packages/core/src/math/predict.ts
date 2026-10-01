@@ -34,16 +34,13 @@
  * below is cited inline against `contracts/rate_limiter/src/lib.rs` and
  * `contracts/payment_channel/src/lib.rs`.
  *
- * ## A deliberate faithfulness quirk: `active` does not gate `check()`
+ * ## `active` gates `check()` on-chain
  *
- * `RateLimiter.kill_agent` sets `RateLimit.active = false`, but
- * `RateLimiter::check` never reads that field — only `is_active()` (a
- * separate query) does. So a killed agent's `check()` call still evaluates
- * (and can pass) the per-tx/hourly/daily/tx-count comparisons on-chain today.
- * This function mirrors that exactly, because its contract is "agrees with
- * `RateLimiter.check`", not "agrees with what `RateLimiter.check` probably
- * should do". `RateLimitSpendState.active` is exposed for callers that want
- * to surface a "killed" badge, but it does not participate in `wouldBlock`.
+ * `RateLimiter.kill_agent` sets `RateLimit.active = false`, and
+ * `RateLimiter::check` now reads that field: a killed agent is blocked for
+ * every amount before any numeric limit comparison. This function mirrors
+ * that by emitting `rate_limit_inactive` when `configured` is true and
+ * `active` is false.
  *
  * @module predict
  */
@@ -88,7 +85,11 @@ export interface ChannelSpendState {
 export interface RateLimitSpendState {
   /** `has_limit(agent)` on-chain — `false` means `check()` always returns `true`. */
   configured: boolean;
-  /** `RateLimit.active` — see the module doc for why this does not gate `wouldBlock`. */
+  /**
+   * `RateLimit.active` — when `false`, `check()` returns `false` on-chain
+   * for every amount (kill switch). Participates in `wouldBlock` as
+   * `rate_limit_inactive` whenever `configured` is true.
+   */
   active: boolean;
   maxPerTx: string;
   maxPerHour: string;
@@ -117,6 +118,7 @@ export type BlockReason =
   | 'invalid_amount'
   | 'channel_inactive'
   | 'channel_spend_limit'
+  | 'rate_limit_inactive'
   | 'rate_limit_per_tx'
   | 'rate_limit_hourly'
   | 'rate_limit_daily'
@@ -200,44 +202,47 @@ export function predictPaymentOutcome({
   }
 
   if (rateLimitState && rateLimitState.configured) {
-    // See the module doc: `check()` does not gate on `active` — intentionally
-    // not checked here either, to stay faithful to on-chain behavior.
+    // `check`: `if !limit.active { return false; }` — a killed agent is
+    // blocked outright, before any numeric limit comparison.
+    if (!rateLimitState.active) {
+      reasons.push('rate_limit_inactive');
+    } else {
+      // `check`: `if amount > limit.max_per_tx { return false; }`
+      if (amt.isGreaterThan(bn(rateLimitState.maxPerTx))) {
+        reasons.push('rate_limit_per_tx');
+      }
 
-    // `check`: `if amount > limit.max_per_tx { return false; }`
-    if (amt.isGreaterThan(bn(rateLimitState.maxPerTx))) {
-      reasons.push('rate_limit_per_tx');
-    }
+      const hourExpired = isWindowExpired(
+        rateLimitState.hourWindowStartLedger,
+        RATE_LIMIT_LEDGERS_PER_HOUR,
+        currentLedger,
+      );
+      const dayExpired = isWindowExpired(
+        rateLimitState.dayWindowStartLedger,
+        RATE_LIMIT_LEDGERS_PER_DAY,
+        currentLedger,
+      );
 
-    const hourExpired = isWindowExpired(
-      rateLimitState.hourWindowStartLedger,
-      RATE_LIMIT_LEDGERS_PER_HOUR,
-      currentLedger,
-    );
-    const dayExpired = isWindowExpired(
-      rateLimitState.dayWindowStartLedger,
-      RATE_LIMIT_LEDGERS_PER_DAY,
-      currentLedger,
-    );
+      // `check` zeroes `hourly_spend`/`hourly_tx_count` and/or `daily_spend`
+      // before checking, exactly like `reset_windows_if_needed`.
+      const effectiveHourlySpend = hourExpired ? bn('0') : bn(rateLimitState.hourlySpend);
+      const effectiveDailySpend = dayExpired ? bn('0') : bn(rateLimitState.dailySpend);
+      const effectiveHourlyTxCount = hourExpired ? 0 : rateLimitState.hourlyTxCount;
 
-    // `check` zeroes `hourly_spend`/`hourly_tx_count` and/or `daily_spend`
-    // before checking, exactly like `reset_windows_if_needed`.
-    const effectiveHourlySpend = hourExpired ? bn('0') : bn(rateLimitState.hourlySpend);
-    const effectiveDailySpend = dayExpired ? bn('0') : bn(rateLimitState.dailySpend);
-    const effectiveHourlyTxCount = hourExpired ? 0 : rateLimitState.hourlyTxCount;
-
-    // `check`: `if limit.hourly_spend + amount > limit.max_per_hour { return false; }`
-    if (add(effectiveHourlySpend, amt).isGreaterThan(bn(rateLimitState.maxPerHour))) {
-      reasons.push('rate_limit_hourly');
-    }
-    // `check`: `if limit.daily_spend + amount > limit.max_per_day { return false; }`
-    if (add(effectiveDailySpend, amt).isGreaterThan(bn(rateLimitState.maxPerDay))) {
-      reasons.push('rate_limit_daily');
-    }
-    // `check`: `if limit.hourly_tx_count >= limit.max_txs_per_hour { return false; }`
-    // Note `>=`, unlike every amount comparison above — the boundary case
-    // (count already equal to the cap) blocks, it does not allow one more.
-    if (effectiveHourlyTxCount >= rateLimitState.maxTxsPerHour) {
-      reasons.push('rate_limit_tx_count');
+      // `check`: `if limit.hourly_spend + amount > limit.max_per_hour { return false; }`
+      if (add(effectiveHourlySpend, amt).isGreaterThan(bn(rateLimitState.maxPerHour))) {
+        reasons.push('rate_limit_hourly');
+      }
+      // `check`: `if limit.daily_spend + amount > limit.max_per_day { return false; }`
+      if (add(effectiveDailySpend, amt).isGreaterThan(bn(rateLimitState.maxPerDay))) {
+        reasons.push('rate_limit_daily');
+      }
+      // `check`: `if limit.hourly_tx_count >= limit.max_txs_per_hour { return false; }`
+      // Note `>=`, unlike every amount comparison above — the boundary case
+      // (count already equal to the cap) blocks, it does not allow one more.
+      if (effectiveHourlyTxCount >= rateLimitState.maxTxsPerHour) {
+        reasons.push('rate_limit_tx_count');
+      }
     }
   }
 

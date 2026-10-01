@@ -350,10 +350,10 @@ export interface RateLimitStatus extends RateLimitConfig {
   configured: boolean;
   /**
    * Mirrors the contract's `RateLimit.active` flag (set by `kill_agent`).
-   * Note this does **not** by itself change what `RateLimiter.check`
-   * returns on-chain today — see `predictPaymentOutcome`'s doc comment —
-   * so treat this as informational (e.g. "killed" badge), not as a
-   * blocking signal on its own.
+   * When `false`, `RateLimiter.check` returns `false` on-chain for every
+   * amount — a killed agent is blocked outright. `predictPaymentOutcome`
+   * mirrors that by emitting `rate_limit_inactive` when `configured` is true
+   * and `active` is false. Treat this as a blocking signal, not a badge.
    */
   active: boolean;
   /** Ledger sequence at which the current hourly window started. */
