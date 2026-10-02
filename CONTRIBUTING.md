@@ -14,6 +14,7 @@ Thank you for your interest in contributing! StellarAgent is an open-source proj
 - [How to Contribute](#how-to-contribute)
 - [Commit Convention](#commit-convention)
 - [Pull Request Process](#pull-request-process)
+- [Dependency Update PRs](#dependency-update-prs)
 - [Good First Issues](#good-first-issues)
 
 ---
@@ -436,6 +437,18 @@ Types: `feat`, `fix`, `docs`, `test`, `chore`, `refactor`, `perf`
 2. All CI checks must pass (build, lint, tests)
 3. At least one maintainer review required
 4. Squash commits before merge (maintainer will do this)
+
+---
+
+## Dependency Update PRs
+
+Automated dependency PRs should go through the same review path as any other
+change. Dependabot may group patch-level updates by ecosystem to keep the queue
+manageable; review the generated summary, confirm the manifest or lockfile diff
+is expected, and wait for the normal pull request CI before merging. If CI
+fails, treat it as a dependency compatibility issue and either apply the
+smallest supporting fix or leave the update blocked until the upstream package
+is safe to adopt.
 
 ---
 
