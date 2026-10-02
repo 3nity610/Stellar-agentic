@@ -17,6 +17,7 @@
     "deploy:contracts": "tsx scripts/deploy.ts",
     "fixtures:generate": "tsx scripts/generate-fixtures.ts",
     "fixtures:check": "tsx scripts/generate-fixtures.ts --check",
+    "fixtures:test": "node scripts/generate-fixtures.test.mjs",
     "contracts:specs:generate": "cd contracts && ./generate-specs.sh",
     "contracts:specs:check": "cd contracts && ./generate-specs.sh --check",
     "contract-types:generate": "tsx scripts/generate-contract-types.ts",
