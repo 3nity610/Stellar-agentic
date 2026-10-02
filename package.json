@@ -2,20 +2,61 @@
   "name": "stellaragent",
   "version": "0.1.0",
   "private": true,
-  "description": "AI Agent Payment Rails on Stellar — monorepo",
+  "description": "AI Agent Payment Rails on Stellar \u2014 monorepo",
   "workspaces": [
-    "sdk",
+    "packages/*",
     "dashboard"
   ],
   "scripts": {
-    "dev:dashboard": "npm run dev --workspace=dashboard",
-    "dev:sdk": "npm run dev --workspace=sdk",
-    "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces",
-    "lint": "npm run lint --workspaces"
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "bash ./scripts/test-all.sh",
+    "test:packages": "turbo run test",
+    "test:all": "bash ./scripts/test-all.sh",
+    "test:coverage": "turbo run test:coverage",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "deploy:contracts": "tsx scripts/deploy.ts",
+    "devnet:up": "tsx scripts/devnet.ts up",
+    "devnet:down": "tsx scripts/devnet.ts down",
+    "devnet:wait": "tsx scripts/devnet.ts wait",
+    "devnet:fund": "tsx scripts/devnet.ts fund",
+    "devnet:seed": "tsx scripts/seed.ts",
+    "test:e2e": "tsx scripts/run-e2e.ts",
+    "devnet:harness": "tsx scripts/run-e2e.ts --all",
+    "fixtures:generate": "tsx scripts/generate-fixtures.ts",
+    "fixtures:check": "tsx scripts/generate-fixtures.ts --check",
+    "fixtures:test": "node scripts/generate-fixtures.test.mjs",
+    "contracts:specs:generate": "cd contracts && ./generate-specs.sh",
+    "contracts:specs:check": "cd contracts && ./generate-specs.sh --check",
+    "contract-types:generate": "tsx scripts/generate-contract-types.ts",
+    "contract-types:check": "tsx scripts/generate-contract-types.ts --check",
+    "contract-responses:check": "node scripts/check-contract-response-fixtures.mjs",
+    "docs:api": "tsx scripts/check-public-api.ts && tsx scripts/generate-api-docs.ts",
+    "docs:api:check": "tsx scripts/check-public-api.ts --check && tsx scripts/generate-api-docs.ts --check",
+    "prepare": "husky install"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "turbo": "^2.11.5",
+    "typedoc": "^0.28.20",
+    "typedoc-plugin-markdown": "^4.13.1",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{py}": [
+      "ruff check --fix",
+      "ruff format"
+    ]
   },
   "engines": {
     "node": ">=18"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "packageManager": "pnpm@9.15.9+sha512.68046141893c66fad01c079231128e9afb89ef87e2691d69e4d40eee228988295fd4682181bae55b58418c3a253bde65a505ec7c5f9403ece5cc3cd37dcf2531"
 }

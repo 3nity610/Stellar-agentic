@@ -1,6 +1,28 @@
 # Rust
 target/
 Cargo.lock
+# ...except the contracts workspace's. soroban-env-host depends on
+# ed25519-dalek ">=2.0.0", so an unpinned CI resolve picks up 3.0.0, which it
+# does not compile against — the deployable WASM has to build from a
+# reproducible dependency set, not whatever crates.io published today.
+!contracts/Cargo.lock
+# The Rust SDK's lockfile is committed for the same reason: it is a published
+# library, but CI should test one pinned dependency set rather than whatever
+# crates.io resolved to this morning. A dependent's own resolution is
+# unaffected — cargo ignores a library's lockfile when it is used as a
+# dependency.
+!sdk/rust/Cargo.lock
+# The signing service is a deployable binary, not a library. Its lockfile is
+# not optional: the artifact holding the authority to move money must build
+# from a dependency set someone reviewed, not from whatever crates.io published
+# the morning of the deploy.
+!services/signer/Cargo.lock
+# Same reason as the three above, and the same failure: soroban-env-host (a
+# dev-dependency, via payment_channel) declares ed25519-dalek ">=2.0.0", so an
+# unpinned resolve picks up 3.0.0 — which it does not compile against
+# (E0277, `ChaCha20Rng: CryptoRng`). zk/Cargo.lock pins it to 2.2.0.
+!zk/Cargo.lock
+test_snapshots/
 
 # Node
 node_modules/
@@ -12,6 +34,16 @@ dist/
 dist-ssr/
 *.local
 
+# Turborepo
+.turbo/
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
 # Editor
 .vscode/
 .idea/
@@ -22,4 +54,19 @@ dist-ssr/
 # Stellar
 .soroban/
 identity/
-test_snapshots/
+
+# Generated deployment configs (contract IDs are environment-specific)
+deployments/*.json
+!deployments/example.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
