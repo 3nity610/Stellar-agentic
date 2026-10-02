@@ -469,10 +469,62 @@ constraints — is in **[docs/deployment.md](docs/deployment.md)**.
 
 If you're new to the project, start here:
 
-- **Contracts**: Write unit tests for the `RateLimiter` contract
-- **SDK**: Add JSDoc comments to all exported functions
-- **Dashboard**: Improve mobile responsiveness of the agent table
-- **Docs**: Add a tutorial for deploying contracts to testnet
+### Starter Task List (ordered by context needed)
+
+| Task | Area | Context Needed | Good For |
+|------|------|----------------|----------|
+| Add JSDoc comments to exported functions in `@stellaragent/core` | SDK | Low — read existing JSDoc patterns | First-time OSS contributors |
+| Improve mobile responsiveness of the agent table in dashboard | Dashboard | Low — CSS/Tailwind only | Frontend newcomers |
+| Write unit tests for `RateLimiter` contract | Contracts | Medium — Rust + Soroban basics | Rust learners |
+| Add a tutorial for deploying contracts to testnet | Docs | Medium — walk through deploy script | Technical writers |
+| Add integration tests for `packages/core/src/math` helpers | SDK | Medium — Vitest + determinism fixtures | Test enthusiasts |
+| Extend CLI with a new read-only command (e.g., `stellaragent channel list`) | CLI | High — Commander.js + SDK internals | CLI tool builders |
+| Add a new dashboard panel for escrow job metrics | Dashboard | High — React + `@stellaragent/react` hooks | Full-stack contributors |
+
+> **Tip:** Tasks at the top need the least context. Pick one, comment on the issue, and start there.
+
+### How to Claim an Issue
+
+1. **Comment on the issue** — Say "I'll take this" or "Working on this" so others know it's claimed.
+2. **Assign yourself** — If you have write access, use the GitHub assignee field. If not, a maintainer will assign you after your comment.
+3. **Open a draft PR early** — Push a work-in-progress PR within 3–5 days so we can give early feedback.
+4. **Ask for help** — Stuck? Tag `@maintainer` in the PR or post in `#contributors` on Discord.
+
+### Stale Issue Policy
+
+- **No activity for 14 days** — Maintainer will ping the assignee.
+- **No activity for 30 days** — Issue is unassigned and back in the pool. The original claimant is welcome to pick it up again.
+- **Label `stale`** — Applied automatically after 21 days of inactivity via GitHub Actions. A comment from anyone removes it.
+
+---
+
+## Response Time Commitments
+
+| Event | Target First Response |
+|-------|----------------------|
+| New `good first issue` / `help wanted` issue | **2 business days** |
+| New PR from first-time contributor | **3 business days** |
+| Draft PR marked "Ready for review" | **2 business days** |
+| Question in `#contributors` Discord channel | **1 business day** (best effort) |
+
+Maintainers aim to meet these targets. If we miss one, nudge us — we appreciate it.
+
+---
+
+## Where to Get Help
+
+| Channel | Purpose |
+|---------|---------|
+| **GitHub Issue** | Bug reports, feature requests, design discussions |
+| **GitHub Discussion** | Open-ended questions, RFCs, "how do I…?" |
+| **Discord `#contributors`** | Real-time help, pairing, stuck-on-something-now |
+| **Tag `@stellaragent/maintainers`** | Escalate a stalled PR or issue |
+
+**Named contacts** (as of this writing):
+- **Lead maintainer**: [@maintainer-github-handle](https://github.com/maintainer-github-handle)
+- **Community liaison**: [@community-github-handle](https://github.com/community-github-handle)
+
+> If you don't know who to ping, post in `#contributors` on Discord — someone will route you.
 
 ---
 
