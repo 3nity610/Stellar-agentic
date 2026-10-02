@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "agent_wallet_factory",
+    "bug_bounty_oracle",
     "payment_channel",
     "escrow",
     "reputation_registry",

@@ -67,7 +67,7 @@ stellaragent/
 ┌──────────────────────▼──────────────────────────────┐
 │           Soroban Smart Contracts (Rust)              │
 │  AgentWalletFactory │ PaymentChannel │ Escrow        │
-│  RateLimiter        │ AuditLog                       │
+│  BugBountyOracle    │ RateLimiter    │ AuditLog      │
 └──────────────────────┬──────────────────────────────┘
                        │ Stellar Network
 ┌──────────────────────▼──────────────────────────────┐
