@@ -457,6 +457,14 @@ If you're new to the project, start here:
 
 ---
 
+## Python SDK release checklist
+
+- [ ] Bump `version` in `python/pyproject.toml`
+- [ ] `cd python && pytest -q && mypy && ruff check ..`
+- [ ] `git tag sdk-python-v<version> && git push --tags`
+
+---
+
 ## Questions?
 
 Open a [GitHub Discussion](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/discussions) or an issue on the [tracker](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/issues).

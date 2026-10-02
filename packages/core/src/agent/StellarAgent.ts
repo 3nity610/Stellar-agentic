@@ -640,8 +640,8 @@ export class StellarAgent {
   /**
    * Get spend report for the current period
    */
-  async getSpendReport(): Promise<SpendReport> {
-    return queries.getSpendReport(this.invokeContract.bind(this), this.contracts.paymentChannel, this.activeChannelId);
+  async getSpendReport(channelId = this.activeChannelId): Promise<SpendReport> {
+    return queries.getSpendReport(this.invokeContract.bind(this), this.contracts.paymentChannel, channelId);
   }
 
   /**
