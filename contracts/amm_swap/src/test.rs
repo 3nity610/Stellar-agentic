@@ -63,6 +63,20 @@ fn swap_pays_out_at_configured_rate() {
 }
 
 #[test]
+fn route_discovery_can_probe_and_quote_without_mutation() {
+    let h = setup();
+    assert!(!h.amm.has_rate(&h.from_token, &h.to_token));
+    h.amm
+        .set_rate(&h.admin, &h.from_token, &h.to_token, &(5 * RATE_SCALE));
+    assert!(h.amm.has_rate(&h.from_token, &h.to_token));
+    assert_eq!(h.amm.quote(&h.from_token, &1_234, &h.to_token), 6_170);
+    assert_eq!(
+        token::Client::new(&h.env, &h.to_token).balance(&h.amm.address),
+        1_000_000_000
+    );
+}
+
+#[test]
 #[should_panic(expected = "swap output below min_out")]
 fn swap_reverts_when_below_min_out() {
     let h = setup();
@@ -84,4 +98,41 @@ fn swap_reverts_without_a_configured_rate() {
     let recipient = Address::generate(&h.env);
     h.amm
         .execute_swap(&h.from_token, &1_000, &h.to_token, &0, &recipient);
+}
+
+#[test]
+#[should_panic(expected = "balance is not sufficient to spend")]
+fn swap_reverts_when_output_exceeds_funded_liquidity() {
+    let h = setup();
+    h.amm
+        .set_rate(&h.admin, &h.from_token, &h.to_token, &(5 * RATE_SCALE));
+
+    let from_asset_client = token::StellarAssetClient::new(&h.env, &h.from_token);
+    from_asset_client.mint(&h.amm.address, &200_000_001);
+
+    let recipient = Address::generate(&h.env);
+    h.amm.execute_swap(
+        &h.from_token,
+        &200_000_001,
+        &h.to_token,
+        &0,
+        &recipient,
+    );
+}
+
+#[test]
+#[should_panic(expected = "not the admin")]
+fn set_rate_rejects_non_admin() {
+    let h = setup();
+    let other = Address::generate(&h.env);
+    h.amm
+        .set_rate(&other, &h.from_token, &h.to_token, &(5 * RATE_SCALE));
+}
+
+#[test]
+#[should_panic(expected = "not the admin")]
+fn fund_rejects_non_admin() {
+    let h = setup();
+    let other = Address::generate(&h.env);
+    h.amm.fund(&other, &h.to_token, &1_000);
 }

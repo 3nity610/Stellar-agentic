@@ -14,3 +14,4 @@ export * from './fixed-point.js';
 export * from './bid.js';
 export * from './attestation.js';
 export * from './predict.js';
+export * from './routing.js';

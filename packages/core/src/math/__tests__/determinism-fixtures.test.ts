@@ -25,6 +25,9 @@ import BigNumber from 'bignumber.js';
 import * as fp from '../fixed-point.js';
 import * as bid from '../bid.js';
 import type { AgentBid, BidWeights, ScoredBid } from '../bid.js';
+import * as routing from '../routing.js';
+import type { RoutingPolicy } from '../routing.js';
+import type { RouteQuote } from '../../routing/types.js';
 
 // ─── Load ────────────────────────────────────────────────────────────────────
 
@@ -80,6 +83,19 @@ interface Fixtures {
     rankBids: RankCase[];
     spendLimit: SpendCase[];
     invalidWeights: { id: string; weights: BidWeights }[];
+  };
+  routing: {
+    policies: Record<string, RoutingPolicy>;
+    rankRoutes: {
+      id: string;
+      routes: RouteQuote[];
+      policy: string;
+      expect: {
+        id: string;
+        score: string;
+        breakdown: routing.RouteScoreBreakdown;
+      }[];
+    }[];
   };
 }
 
@@ -139,6 +155,7 @@ describe('fixture file', () => {
     expect(FIXTURES.bid.scoreBid.length).toBeGreaterThan(100);
     expect(FIXTURES.bid.rankBids.length).toBeGreaterThan(10);
     expect(FIXTURES.bid.spendLimit.length).toBeGreaterThan(10);
+    expect(FIXTURES.routing.rankRoutes.length).toBeGreaterThan(10);
   });
 
   it('covers both value and throwing cases', () => {
@@ -248,6 +265,33 @@ describe('invalid-weight fixtures', () => {
     (_id, testCase) => {
       expect(() => bid.scoreBid(sample, '10', '10', testCase.weights))
         .toThrow(/weights must sum to 1\.0/);
+    },
+  );
+});
+
+// ─── deterministic routing ──────────────────────────────────────────────────
+
+describe('routing fixtures', () => {
+  const simplify = (ranked: routing.ScoredRoute[]) => ranked.map((entry) => ({
+    id: entry.id,
+    score: entry.score,
+    breakdown: entry.breakdown,
+  }));
+
+  it.each(FIXTURES.routing.rankRoutes.map((c) => [c.id, c] as const))(
+    '%s',
+    (_id, testCase) => {
+      const policy = FIXTURES.routing.policies[testCase.policy]!;
+      expect(simplify(routing.rankRoutes(testCase.routes, policy))).toEqual(testCase.expect);
+    },
+  );
+
+  it.each(FIXTURES.routing.rankRoutes.map((c) => [c.id, c] as const))(
+    '%s is order-independent',
+    (_id, testCase) => {
+      const policy = FIXTURES.routing.policies[testCase.policy]!;
+      expect(simplify(routing.rankRoutes([...testCase.routes].reverse(), policy)))
+        .toEqual(testCase.expect);
     },
   );
 });

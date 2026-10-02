@@ -6,7 +6,7 @@
 
 # Interface: RateLimitConfig
 
-Defined in: [types/index.ts:301](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L301)
+Defined in: [types/index.ts:326](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L326)
 
 ## Extended by
 
@@ -18,7 +18,7 @@ Defined in: [types/index.ts:301](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > **maxPerTx**: `string`
 
-Defined in: [types/index.ts:302](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L302)
+Defined in: [types/index.ts:327](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L327)
 
 ***
 
@@ -26,7 +26,7 @@ Defined in: [types/index.ts:302](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > **maxPerHour**: `string`
 
-Defined in: [types/index.ts:303](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L303)
+Defined in: [types/index.ts:328](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L328)
 
 ***
 
@@ -34,7 +34,7 @@ Defined in: [types/index.ts:303](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > **maxPerDay**: `string`
 
-Defined in: [types/index.ts:304](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L304)
+Defined in: [types/index.ts:329](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L329)
 
 ***
 
@@ -42,4 +42,4 @@ Defined in: [types/index.ts:304](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > **maxTxsPerHour**: `number`
 
-Defined in: [types/index.ts:305](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L305)
+Defined in: [types/index.ts:330](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L330)

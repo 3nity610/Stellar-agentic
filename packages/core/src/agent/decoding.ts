@@ -23,6 +23,7 @@ import type {
   JobInfo,
   RateLimitStatus,
 } from '../types/index.js';
+import type { ChannelSpendState, RateLimitSpendState } from '../math/predict.js';
 
 export function toAgentInfo(agentId: bigint, raw: RawAgentInfo): AgentInfo {
   return {
@@ -80,5 +81,31 @@ export function toRateLimitStatus(raw: RawRateLimit): RateLimitStatus {
     txsThisHour: raw.hourly_tx_count,
     hourWindowStartLedger: raw.hour_window_start,
     dayWindowStartLedger: raw.day_window_start,
+  };
+}
+
+export function toChannelSpendState(channel: ChannelInfo): ChannelSpendState {
+  return {
+    active: channel.active,
+    limitPerPeriod: channel.limitPerPeriod.toString(),
+    spentThisPeriod: channel.spentThisPeriod.toString(),
+    periodStartLedger: channel.periodStartLedger,
+    period: channel.period,
+  };
+}
+
+export function toRateLimitSpendState(status: RateLimitStatus): RateLimitSpendState {
+  return {
+    configured: status.configured,
+    active: status.active,
+    maxPerTx: status.maxPerTx,
+    maxPerHour: status.maxPerHour,
+    maxPerDay: status.maxPerDay,
+    maxTxsPerHour: status.maxTxsPerHour,
+    hourlySpend: status.spentThisHour,
+    dailySpend: status.spentToday,
+    hourlyTxCount: status.txsThisHour,
+    hourWindowStartLedger: status.hourWindowStartLedger,
+    dayWindowStartLedger: status.dayWindowStartLedger,
   };
 }

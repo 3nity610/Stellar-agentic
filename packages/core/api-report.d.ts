@@ -5,7 +5,7 @@
 
 import BigNumber from 'bignumber.js';
 export { default as BigNumber } from 'bignumber.js';
-import { Keypair, Account, Transaction, FeeBumpTransaction, SorobanRpc } from '@stellar/stellar-sdk';
+import { Keypair, Account, Transaction, FeeBumpTransaction, SorobanRpc, xdr } from '@stellar/stellar-sdk';
 
 /**
  * Deterministic fixed-point arithmetic for Stellar agent payment calculations.
@@ -383,6 +383,121 @@ declare function attestRankBids(bids: AgentBid[], weights: BidWeights | undefine
  */
 declare function verifyBidAttestation(bids: AgentBid[], result: ScoredBid[], attestation: BidAttestation, trustedKeys: ScorerKeyDirectory, options?: VerifyBidAttestationOptions): BidAttestationVerification;
 
+/** Canonical, venue-neutral routing types. Amounts are integer base units. */
+type RouteVenue = 'direct' | 'amm' | 'path_payment';
+type RouteUnavailableCode = 'UNSUPPORTED_PAIR' | 'INSUFFICIENT_LIQUIDITY' | 'VENUE_UNAVAILABLE' | 'QUOTE_EXPIRED' | 'INVALID_QUOTE';
+/** One executable segment of a candidate route. */
+interface RouteHop {
+    venue: RouteVenue;
+    /** Stable venue identifier. A contract-backed venue uses its C... address. */
+    venueId: string;
+    sourceAsset: string;
+    destinationAsset: string;
+    sourceAmount: string;
+    expectedOutput: string;
+    /** Fee charged by this segment, in its source asset's base units. */
+    feeAmount: string;
+    /** Source-normalized fee, in basis points. */
+    feeBps: number;
+    /** Expected price impact/slippage, in basis points. */
+    slippageBps: number;
+    /** 0..10,000; 10,000 represents the most reliable quote. */
+    reliabilityBps: number;
+    /** Intermediate assets embedded in a classic Stellar path-payment quote. */
+    path?: string[];
+    /** Per-hop execution floor. The final route still has one end-to-end floor. */
+    minOutput?: string;
+}
+/** A normalized executable quote consumed by the deterministic selector. */
+interface RouteQuote {
+    /** Canonical identifier derived from assets, venues, and path. */
+    id: string;
+    sourceAsset: string;
+    destinationAsset: string;
+    sourceAmount: string;
+    expectedDestinationAmount: string;
+    totalFeeBps: number;
+    expectedSlippageBps: number;
+    reliabilityBps: number;
+    /** Economic depth, including assets embedded in path-payment operations. */
+    hopCount: number;
+    hops: RouteHop[];
+    /** Last ledger in which every component quote is valid. */
+    expiresAtLedger?: number;
+}
+interface RouteRequest {
+    sourceAsset: string;
+    destinationAsset: string;
+    /** Integer base units, not a decimal display amount. */
+    sourceAmount: string;
+    currentLedger?: number;
+    /** Assets that bounded multi-hop discovery may traverse. */
+    allowedIntermediates?: string[];
+}
+interface RouteProviderContext {
+    maxHops: number;
+    maxCandidates: number;
+}
+/** Venue adapter. Provider failures are isolated by the discovery engine. */
+interface RouteProvider {
+    readonly id: string;
+    discover(request: RouteRequest, context: RouteProviderContext): Promise<RouteHop[][]>;
+}
+/** Optional independent fair-value source; never treated as executable liquidity. */
+interface RoutePriceOracle {
+    readonly id: string;
+    quote(request: RouteRequest): Promise<OracleReference | null>;
+}
+interface OracleReference {
+    expectedDestinationAmount: string;
+    reliabilityBps: number;
+    expiresAtLedger?: number;
+}
+interface RouteDiscoveryOptions {
+    providers: RouteProvider[];
+    oracle?: RoutePriceOracle;
+    /** @default 3 */
+    maxHops?: number;
+    /** @default 32 */
+    maxCandidates?: number;
+}
+interface RouteDiscoveryFailure {
+    providerId: string;
+    code: RouteUnavailableCode;
+    message: string;
+}
+interface RouteDiscoveryResult {
+    routes: RouteQuote[];
+    failures: RouteDiscoveryFailure[];
+    oracleReference?: OracleReference;
+}
+interface AmmPair {
+    sourceAsset: string;
+    destinationAsset: string;
+}
+interface AmmHopQuote {
+    expectedOutput: string;
+    feeAmount?: string;
+    feeBps?: number;
+    slippageBps?: number;
+    reliabilityBps?: number;
+    minOutput?: string;
+}
+type AmmQuoteCallback = (pair: AmmPair, sourceAmount: string) => Promise<AmmHopQuote | null>;
+interface PathPaymentCandidate {
+    /** Stable liquidity-source identifier, or an execution-adapter contract ID. */
+    venueId: string;
+    /** Assets between source and destination, excluding both endpoints. */
+    path: string[];
+    expectedDestinationAmount: string;
+    feeAmount?: string;
+    feeBps?: number;
+    slippageBps?: number;
+    reliabilityBps?: number;
+    minDestinationAmount?: string;
+}
+type PathPaymentQuoteCallback = (request: RouteRequest) => Promise<PathPaymentCandidate[]>;
+
 /**
  * Signing abstraction.
  *
@@ -628,6 +743,80 @@ declare class SignerAdapter implements Signer {
 }
 /** Duck-typed check — `instanceof` fails across duplicated package copies. */
 declare function isSigner(value: unknown): value is Signer;
+
+/**
+ * Deterministic multi-asset route selection.
+ *
+ * The selector consumes only normalized integer quotes. It performs no I/O,
+ * reads no clock, uses no floating point, and defines a total tie-break order.
+ */
+
+declare const ROUTING_WEIGHT_SCALE = 10000;
+interface RoutingPolicy {
+    /** Relative weight of source-normalized fees. */
+    costWeight: number;
+    /** Relative weight of expected price impact. */
+    slippageWeight: number;
+    /** Relative weight of the reliability shortfall. */
+    reliabilityWeight: number;
+    /** Fixed score added for every economic hop after the first. */
+    hopPenalty: number;
+    /** Routes above this expected slippage are inadmissible. */
+    maxSlippageBps: number;
+    /** Routes below this reliability are inadmissible. */
+    minReliabilityBps: number;
+}
+declare const DEFAULT_ROUTING_POLICY: Readonly<RoutingPolicy>;
+interface RouteScoreBreakdown {
+    weightedCost: string;
+    weightedSlippage: string;
+    weightedReliability: string;
+    hopPenalty: string;
+}
+interface ScoredRoute extends RouteQuote {
+    /** Lower is better. Integer score for byte-identical TS/Python output. */
+    score: string;
+    breakdown: RouteScoreBreakdown;
+}
+/** Validate and score one normalized route, including policy admission bounds. */
+declare function scoreRoute(route: RouteQuote, policy?: RoutingPolicy): ScoredRoute;
+/** Whether a structurally valid route clears policy reliability/slippage bounds. */
+declare function isRouteEligible(route: RouteQuote, policy?: RoutingPolicy): boolean;
+/**
+ * Rank routes with a total, input-order-independent comparison:
+ * score, output (descending), slippage, hop count, then canonical route ID.
+ */
+declare function rankRoutes(routes: readonly RouteQuote[], policy?: RoutingPolicy): ScoredRoute[];
+/** Select the deterministic winner, or null when no route is admissible. */
+declare function selectRoute(routes: readonly RouteQuote[], policy?: RoutingPolicy): ScoredRoute | null;
+declare function validateRoutingPolicy(policy: RoutingPolicy): void;
+
+interface RoutePlannerOptions extends RouteDiscoveryOptions {
+    policy?: RoutingPolicy;
+    /** Maximum quote lifetime when venues provide no earlier expiry. @default 20 */
+    quoteValidityLedgers?: number;
+    /** Caller slippage used to derive the final minimum. @default 100 (1%) */
+    defaultSlippageToleranceBps?: number;
+}
+interface PaymentQuoteRequest extends RouteRequest {
+    slippageToleranceBps?: number;
+}
+/** Complete pre-commit artifact. Pass this object back to `payForAPI`. */
+interface PaymentQuote {
+    route: ScoredRoute;
+    minimumDestinationAmount: string;
+    quotedAtLedger: number;
+    validUntilLedger: number;
+    failures: RouteDiscoveryFailure[];
+}
+/** Discovery + deterministic selection + quote freshness in one reusable service. */
+declare class RoutePlanner {
+    constructor(options: RoutePlannerOptions);
+    quote(request: PaymentQuoteRequest): Promise<PaymentQuote>;
+    /** Validate a caller-selected route under the same safety policy. */
+    quoteOverride(request: PaymentQuoteRequest, override: RouteQuote): PaymentQuote;
+    assertFresh(quote: PaymentQuote, currentLedger: number): void;
+}
 
 interface HistogramRecord {
     name: string;
@@ -1166,6 +1355,17 @@ interface StellarAgentConfig {
     submissionQueue?: SubmissionQueue;
     /** Build a queue owned by this agent. Omitted fields use fleet-safe defaults. */
     submission?: SubmissionPipelineConfig;
+    /** Multi-venue discovery and deterministic route-selection configuration. */
+    routing?: RoutePlannerOptions;
+}
+interface QuoteParams {
+    sourceAsset: string;
+    destinationAsset: string;
+    /** Decimal display amount; converted to 7-decimal base units before discovery. */
+    amount: string;
+    allowedIntermediates?: string[];
+    /** 0..500 basis points. @default 100 */
+    slippageToleranceBps?: number;
 }
 interface FeeBumpConfig {
     /** @default true */
@@ -1226,6 +1426,8 @@ interface PayForAPIParams {
     amount: string;
     /** Asset to pay with (must match the channel's settlement asset) */
     asset?: string;
+    /** Explicit source asset; `asset` remains a backwards-compatible alias. */
+    sourceAsset?: string;
     /** Channel ID to use (uses default if not specified) */
     channelId?: bigint;
     /**
@@ -1235,23 +1437,34 @@ interface PayForAPIParams {
     recipient?: string;
     /**
      * Asset the recipient should actually receive, if different from the
-     * channel's settlement asset (`asset`) — e.g. a channel funded in USDC
-     * paying a provider that only accepts XLM. When set, this routes through
-     * `PaymentChannel.pay_with_conversion` instead of `pay`, converting via
-     * the channel contract's configured price oracle + AMM. The spend limit
-     * is still enforced in the channel's settlement asset regardless of
-     * `destAsset`. Requires `minReceived` to also be set.
+     * channel's settlement asset (`asset`) — e.g. a channel funded in XLM
+     * paying a provider that only accepts USDC. With `StellarAgentConfig.routing`
+     * configured, the SDK discovers and deterministically selects an AMM,
+     * Stellar path-payment adapter, or bounded multi-hop route. Without routing
+     * configuration, the legacy single-AMM `pay_with_conversion` path remains
+     * available and requires `minReceived`. Spend limits always remain in the
+     * channel's settlement asset.
      */
     destAsset?: string;
+    /** Recipient asset; `destAsset` remains a backwards-compatible alias. */
+    recipientAsset?: string;
     /**
      * Minimum amount of `destAsset` the recipient must receive (slippage
-     * floor), as a string in `destAsset` units. Required when `destAsset` is
-     * set. The contract additionally enforces its own oracle-derived
-     * fairness bound on top of this — see
-     * `contracts/payment_channel/src/lib.rs`'s `pay_with_conversion` for the
-     * full slippage/price-oracle design.
+     * floor), as a decimal string in `destAsset` units. Automatic routing
+     * derives this from `slippageToleranceBps`; when both are supplied the
+     * stricter floor wins. It is required only for the legacy single-AMM path.
+     * The contract additionally enforces its oracle-derived end-to-end floor.
      */
     minReceived?: string;
+    /**
+     * Reuse a prior `quote()` result or override automatic selection with a
+     * normalized route. Policy, intent, amount, and expiry remain enforced.
+     */
+    route?: PaymentQuote | RouteQuote;
+    /** Intermediate assets automatic discovery may traverse. */
+    allowedIntermediates?: string[];
+    /** Automatic-quote slippage tolerance in basis points, capped at 500. */
+    slippageToleranceBps?: number;
 }
 interface ChannelInfo {
     id: bigint;
@@ -1373,6 +1586,12 @@ interface TxResult {
     feeSource?: string;
     /** Number of envelopes accepted for this operation, including a replacement. */
     submissionAttempts?: number;
+    /** Deterministic route executed for a converted payment. */
+    route?: RouteQuote;
+    /** Quoted destination amount in integer base units. */
+    expectedDestinationAmount?: string;
+    /** End-to-end contract floor in destination base units. */
+    minimumDestinationAmount?: string;
 }
 
 /**
@@ -1520,14 +1739,19 @@ declare const index_BigNumber: typeof BigNumber;
 type index_BlockReason = BlockReason;
 type index_ChannelSpendState = ChannelSpendState;
 declare const index_DEFAULT_BID_WEIGHTS: typeof DEFAULT_BID_WEIGHTS;
+declare const index_DEFAULT_ROUTING_POLICY: typeof DEFAULT_ROUTING_POLICY;
 declare const index_LEDGERS_PER_CHANNEL_PERIOD: typeof LEDGERS_PER_CHANNEL_PERIOD;
 type index_PaymentPrediction = PaymentPrediction;
 type index_PredictPaymentOutcomeParams = PredictPaymentOutcomeParams;
 declare const index_RATE_LIMIT_LEDGERS_PER_DAY: typeof RATE_LIMIT_LEDGERS_PER_DAY;
 declare const index_RATE_LIMIT_LEDGERS_PER_HOUR: typeof RATE_LIMIT_LEDGERS_PER_HOUR;
+declare const index_ROUTING_WEIGHT_SCALE: typeof ROUTING_WEIGHT_SCALE;
 type index_RateLimitSpendState = RateLimitSpendState;
+type index_RouteScoreBreakdown = RouteScoreBreakdown;
+type index_RoutingPolicy = RoutingPolicy;
 declare const index_STROOP_SCALE: typeof STROOP_SCALE;
 type index_ScoredBid = ScoredBid;
+type index_ScoredRoute = ScoredRoute;
 type index_ScorerKeyDirectory = ScorerKeyDirectory;
 type index_ScorerKeyRecord = ScorerKeyRecord;
 type index_VerifyBidAttestationOptions = VerifyBidAttestationOptions;
@@ -1542,6 +1766,7 @@ declare const index_fromStroops: typeof fromStroops;
 declare const index_gt: typeof gt;
 declare const index_gte: typeof gte;
 declare const index_isPositive: typeof isPositive;
+declare const index_isRouteEligible: typeof isRouteEligible;
 declare const index_isWindowExpired: typeof isWindowExpired;
 declare const index_isWithinSpendLimit: typeof isWithinSpendLimit;
 declare const index_isZero: typeof isZero;
@@ -1552,16 +1777,69 @@ declare const index_mul: typeof mul;
 declare const index_pct: typeof pct;
 declare const index_predictPaymentOutcome: typeof predictPaymentOutcome;
 declare const index_rankBids: typeof rankBids;
+declare const index_rankRoutes: typeof rankRoutes;
 declare const index_remainingBudget: typeof remainingBudget;
 declare const index_scoreBid: typeof scoreBid;
+declare const index_scoreRoute: typeof scoreRoute;
 declare const index_selectBestBid: typeof selectBestBid;
+declare const index_selectRoute: typeof selectRoute;
 declare const index_sub: typeof sub;
 declare const index_sumStrings: typeof sumStrings;
 declare const index_toStr: typeof toStr;
 declare const index_toStroops: typeof toStroops;
+declare const index_validateRoutingPolicy: typeof validateRoutingPolicy;
 declare const index_verifyBidAttestation: typeof verifyBidAttestation;
 declare namespace index {
-  export { type index_AgentBid as AgentBid, type index_AttestRankBidsOptions as AttestRankBidsOptions, type index_AttestedRanking as AttestedRanking, index_BPS_SCALE as BPS_SCALE, type index_BidAttestation as BidAttestation, type index_BidAttestationVerification as BidAttestationVerification, type index_BidWeights as BidWeights, index_BigNumber as BigNumber, type index_BlockReason as BlockReason, type index_ChannelSpendState as ChannelSpendState, index_DEFAULT_BID_WEIGHTS as DEFAULT_BID_WEIGHTS, index_LEDGERS_PER_CHANNEL_PERIOD as LEDGERS_PER_CHANNEL_PERIOD, type index_PaymentPrediction as PaymentPrediction, type index_PredictPaymentOutcomeParams as PredictPaymentOutcomeParams, index_RATE_LIMIT_LEDGERS_PER_DAY as RATE_LIMIT_LEDGERS_PER_DAY, index_RATE_LIMIT_LEDGERS_PER_HOUR as RATE_LIMIT_LEDGERS_PER_HOUR, type index_RateLimitSpendState as RateLimitSpendState, index_STROOP_SCALE as STROOP_SCALE, type index_ScoredBid as ScoredBid, type index_ScorerKeyDirectory as ScorerKeyDirectory, type index_ScorerKeyRecord as ScorerKeyRecord, type index_VerifyBidAttestationOptions as VerifyBidAttestationOptions, index_add as add, index_attestRankBids as attestRankBids, index_bn as bn, index_clamp as clamp, index_div as div, index_eq as eq, index_fmt as fmt, index_fromStroops as fromStroops, index_gt as gt, index_gte as gte, index_isPositive as isPositive, index_isWindowExpired as isWindowExpired, index_isWithinSpendLimit as isWithinSpendLimit, index_isZero as isZero, index_ledgersRemainingInWindow as ledgersRemainingInWindow, index_lt as lt, index_lte as lte, index_mul as mul, index_pct as pct, index_predictPaymentOutcome as predictPaymentOutcome, index_rankBids as rankBids, index_remainingBudget as remainingBudget, index_scoreBid as scoreBid, index_selectBestBid as selectBestBid, index_sub as sub, index_sumStrings as sumStrings, index_toStr as toStr, index_toStroops as toStroops, index_verifyBidAttestation as verifyBidAttestation };
+  export { type index_AgentBid as AgentBid, type index_AttestRankBidsOptions as AttestRankBidsOptions, type index_AttestedRanking as AttestedRanking, index_BPS_SCALE as BPS_SCALE, type index_BidAttestation as BidAttestation, type index_BidAttestationVerification as BidAttestationVerification, type index_BidWeights as BidWeights, index_BigNumber as BigNumber, type index_BlockReason as BlockReason, type index_ChannelSpendState as ChannelSpendState, index_DEFAULT_BID_WEIGHTS as DEFAULT_BID_WEIGHTS, index_DEFAULT_ROUTING_POLICY as DEFAULT_ROUTING_POLICY, index_LEDGERS_PER_CHANNEL_PERIOD as LEDGERS_PER_CHANNEL_PERIOD, type index_PaymentPrediction as PaymentPrediction, type index_PredictPaymentOutcomeParams as PredictPaymentOutcomeParams, index_RATE_LIMIT_LEDGERS_PER_DAY as RATE_LIMIT_LEDGERS_PER_DAY, index_RATE_LIMIT_LEDGERS_PER_HOUR as RATE_LIMIT_LEDGERS_PER_HOUR, index_ROUTING_WEIGHT_SCALE as ROUTING_WEIGHT_SCALE, type index_RateLimitSpendState as RateLimitSpendState, type index_RouteScoreBreakdown as RouteScoreBreakdown, type index_RoutingPolicy as RoutingPolicy, index_STROOP_SCALE as STROOP_SCALE, type index_ScoredBid as ScoredBid, type index_ScoredRoute as ScoredRoute, type index_ScorerKeyDirectory as ScorerKeyDirectory, type index_ScorerKeyRecord as ScorerKeyRecord, type index_VerifyBidAttestationOptions as VerifyBidAttestationOptions, index_add as add, index_attestRankBids as attestRankBids, index_bn as bn, index_clamp as clamp, index_div as div, index_eq as eq, index_fmt as fmt, index_fromStroops as fromStroops, index_gt as gt, index_gte as gte, index_isPositive as isPositive, index_isRouteEligible as isRouteEligible, index_isWindowExpired as isWindowExpired, index_isWithinSpendLimit as isWithinSpendLimit, index_isZero as isZero, index_ledgersRemainingInWindow as ledgersRemainingInWindow, index_lt as lt, index_lte as lte, index_mul as mul, index_pct as pct, index_predictPaymentOutcome as predictPaymentOutcome, index_rankBids as rankBids, index_rankRoutes as rankRoutes, index_remainingBudget as remainingBudget, index_scoreBid as scoreBid, index_scoreRoute as scoreRoute, index_selectBestBid as selectBestBid, index_selectRoute as selectRoute, index_sub as sub, index_sumStrings as sumStrings, index_toStr as toStr, index_toStroops as toStroops, index_validateRoutingPolicy as validateRoutingPolicy, index_verifyBidAttestation as verifyBidAttestation };
+}
+
+/** A provider may use this to classify a normal venue miss without throwing a generic error. */
+declare class RouteUnavailableError extends Error {
+    readonly code: RouteUnavailableCode;
+    constructor(code: RouteUnavailableCode, message: string);
+}
+/**
+ * Enumerate and normalize every provider independently. A broken or illiquid
+ * venue becomes a diagnostic entry while valid candidates remain selectable.
+ */
+declare function discoverRoutes(request: RouteRequest, options: RouteDiscoveryOptions): Promise<RouteDiscoveryResult>;
+declare function canonicalRouteId(hops: readonly RouteHop[]): string;
+declare function normalizeRoute(request: RouteRequest, hops: readonly RouteHop[], maxHops: number): RouteQuote;
+declare function applyOracleReference(route: RouteQuote, reference: OracleReference): RouteQuote;
+
+/** Same-asset candidate. It performs no conversion and charges no fee. */
+declare class DirectRouteProvider implements RouteProvider {
+    readonly id = "direct";
+    discover(request: RouteRequest): Promise<RouteHop[][]>;
+}
+interface AmmRouteProviderOptions {
+    id?: string;
+    /** Execution contract or other stable venue identifier. */
+    venueId: string;
+    pairs: AmmPair[];
+    quote: AmmQuoteCallback;
+}
+/** Bounded graph discovery over one AMM/aggregator adapter. */
+declare class AmmRouteProvider implements RouteProvider {
+    readonly id: string;
+    constructor(options: AmmRouteProviderOptions);
+    discover(request: RouteRequest, context: RouteProviderContext): Promise<RouteHop[][]>;
+}
+interface StellarPathPaymentProviderOptions {
+    id?: string;
+    quote: PathPaymentQuoteCallback;
+}
+/** Adapter around Horizon strict-send path discovery or a compatible service. */
+declare class StellarPathPaymentProvider implements RouteProvider {
+    readonly id: string;
+    constructor(options: StellarPathPaymentProviderOptions);
+    discover(request: RouteRequest, context: RouteProviderContext): Promise<RouteHop[][]>;
+}
+/** Small fixture/application adapter for a custom venue implementation. */
+declare class CallbackRouteProvider implements RouteProvider {
+    readonly id: string;
+    constructor(id: string, callback: RouteProvider['discover']);
+    discover(request: RouteRequest, context: RouteProviderContext): Promise<RouteHop[][]>;
 }
 
 /**
@@ -1644,7 +1922,7 @@ interface LedgerCloseEstimate {
 declare function fetchLedgerCloseEstimate(horizonUrl: string, sampleSize?: number): Promise<LedgerCloseEstimate>;
 
 /** Stable machine-readable codes for StellarAgent failures. */
-type StellarAgentErrorCode = 'INVALID_ARGUMENT' | 'NO_ACTIVE_CHANNEL' | 'SPEND_LIMIT_EXCEEDED' | 'CHANNEL_NOT_FOUND' | 'CHANNEL_CLOSED' | 'JOB_NOT_FOUND' | 'JOB_NOT_OPEN' | 'JOB_EXPIRED' | 'NOT_AUTHORIZED' | 'RATE_LIMIT_NOT_FOUND' | 'CONTRACT_ERROR' | 'SIMULATION_FAILED' | 'SUBMISSION_FAILED' | 'TRANSACTION_FAILED' | 'TRANSACTION_TIMEOUT' | 'NETWORK_ERROR';
+type StellarAgentErrorCode = 'INVALID_ARGUMENT' | 'NO_ACTIVE_CHANNEL' | 'NO_ROUTE' | 'QUOTE_EXPIRED' | 'INVALID_ROUTE_OVERRIDE' | 'INSUFFICIENT_LIQUIDITY' | 'VENUE_UNAVAILABLE' | 'SPEND_LIMIT_EXCEEDED' | 'CHANNEL_NOT_FOUND' | 'CHANNEL_CLOSED' | 'JOB_NOT_FOUND' | 'JOB_NOT_OPEN' | 'JOB_EXPIRED' | 'NOT_AUTHORIZED' | 'RATE_LIMIT_NOT_FOUND' | 'CONTRACT_ERROR' | 'SIMULATION_FAILED' | 'SUBMISSION_FAILED' | 'TRANSACTION_FAILED' | 'TRANSACTION_TIMEOUT' | 'NETWORK_ERROR';
 /** Error thrown for SDK validation, Soroban RPC, and contract failures. */
 declare class StellarAgentError extends Error {
     readonly code: StellarAgentErrorCode;
@@ -1915,6 +2193,165 @@ declare function initTelemetry(config?: TelemetryConfig & {
 }): Promise<TelemetryContext>;
 
 /**
+ * Shared Soroban build/simulate/sign/submit pipeline.
+ *
+ * Agent authorization and transaction sequencing are intentionally separate:
+ * authorization entries are signed by `ctx.signer`, while an exclusive channel
+ * lease supplies the envelope source/signature. This lets one logical agent use
+ * many independent sequence streams without changing on-chain authorization.
+ */
+
+/**
+ * A bound reference to `StellarAgent`'s private `invokeContract` method —
+ * what every query/mutation helper calls through.
+ */
+type InvokeFn = (contractId: string, method: string, args: xdr.ScVal[], readOnly?: boolean) => Promise<{
+    value: unknown;
+    tx: TxResult;
+}>;
+
+/**
+ * Groth16 solvency proofs: point encoding, and the two `PaymentChannel`
+ * entrypoints that install a verifying key and check a proof against it.
+ *
+ * ## The wire format problem this module exists to solve
+ *
+ * Soroban and arkworks agree on the curve (BLS12-381) and disagree about
+ * almost everything else. arkworks' `CanonicalSerialize` emits
+ * little-endian, Montgomery-form bytes; Soroban follows the ZCash/IETF
+ * convention — **uncompressed**, **big-endian** coordinates, with three flag
+ * bits packed into the top of the first byte. Feeding arkworks' own bytes
+ * straight to `env.crypto().bls12_381()` would produce a different (or
+ * outright invalid) point, and the failure shows up as a `pairing_check` that
+ * returns `false` for a proof that is in fact valid — the worst kind of
+ * failure, because it is indistinguishable from a fraudulent proof.
+ *
+ * `zk/solvency_proof/src/soroban_encoding.rs` is the Rust side of this same
+ * conversion, and its tests assert against the known-answer G1 generator
+ * vector published in `soroban_sdk`'s own rustdoc. {@link SOROBAN_G1_GENERATOR}
+ * below is that same vector, and {@link G1_POINT_SIZE} /
+ * {@link G2_POINT_SIZE} are the same constants — keep the two in step.
+ *
+ * ## What the on-chain check actually asserts
+ *
+ * `PaymentChannel.verify_solvency_proof` folds the channel's **own** public
+ * `limit_per_period` and `total_spent` into the Groth16 public-input term
+ * and runs the pairing check. A valid proof therefore says: *some* ordering of
+ * undisclosed payments into spend-limit periods never exceeded the limit, and
+ * those payments sum to exactly the channel's recorded total. It says nothing
+ * about who was paid, when, or in how many transactions — see
+ * `docs/zk-solvency-design.md`.
+ *
+ * @module solvency
+ */
+
+/** Size of a BLS12-381 base-field element, in bytes. */
+declare const FP_SIZE = 48;
+/** Size of a compressed-free (uncompressed) G1 point: `be(X) || be(Y)`. */
+declare const G1_POINT_SIZE: number;
+/** Size of an Fp2 element: two base-field elements. */
+declare const FP2_SIZE: number;
+/** Size of an uncompressed G2 point: `be(X_c1) || be(X_c0) || be(Y_c1) || be(Y_c0)`. */
+declare const G2_POINT_SIZE: number;
+/** Size of a scalar field element, in bytes. */
+declare const FR_SIZE = 32;
+/** The `SolvencyVerifyingKey.gamma_abc_g1` length the contract enforces. */
+declare const SOLVENCY_PUBLIC_INPUTS = 2;
+declare const GAMMA_ABC_G1_SIZE: number;
+/**
+ * The known-answer BLS12-381 G1 generator, in Soroban's encoding.
+ *
+ * Lifted from `soroban_sdk::crypto::bls12_381`'s own rustdoc example for
+ * `g1_add(zero, one)`. If this constant ever stops decoding to a well-formed
+ * point, the SDK and the Rust crate have diverged and every proof the SDK
+ * submits will be rejected on-chain for a reason that looks like a bad proof.
+ */
+declare const SOROBAN_G1_GENERATOR: string;
+/** An uncompressed BLS12-381 G1 point, 96 bytes, as `BytesN<96>` reaches the wire. */
+type SolvencyG1Point = Uint8Array;
+/** An uncompressed BLS12-381 G2 point, 192 bytes. */
+type SolvencyG2Point = Uint8Array;
+/**
+ * A Groth16 verifying key for the solvency circuit, in the same shape
+ * `PaymentChannel.SolvencyVerifyingKey` decodes to.
+ *
+ * `gammaAbcG1` must hold exactly {@link GAMMA_ABC_G1_SIZE} points: the constant
+ * term, then one per public input in circuit order (`limitPerPeriod`, then
+ * `totalSpent`). The contract rejects any other length, so this is checked
+ * here too — a bad key is otherwise only discoverable by spending a
+ * transaction on a revert.
+ */
+interface SolvencyVerifyingKey {
+    alphaG1: SolvencyG1Point;
+    betaG2: SolvencyG2Point;
+    gammaG2: SolvencyG2Point;
+    deltaG2: SolvencyG2Point;
+    gammaAbcG1: SolvencyG1Point[];
+}
+/** A Groth16 proof for the solvency circuit. */
+interface SolvencyProof {
+    a: SolvencyG1Point;
+    b: SolvencyG2Point;
+    c: SolvencyG1Point;
+}
+/** Validate a G1 point and return its bytes. */
+declare function toSolvencyG1(value: Uint8Array | string, name?: string): SolvencyG1Point;
+/** Validate a G2 point and return its bytes. */
+declare function toSolvencyG2(value: Uint8Array | string, name?: string): SolvencyG2Point;
+/** The BLS12-381 G1 generator, as the SDK encodes it. Useful as a test vector. */
+declare function g1Generator(): SolvencyG1Point;
+/** The G1 point at infinity, as the SDK encodes it. */
+declare function g1Infinity(): SolvencyG1Point;
+/** Encode a verifying key as the `SolvencyVerifyingKey` contract struct. */
+declare function solvencyVerifyingKeyVal(vk: SolvencyVerifyingKey): xdr.ScVal;
+/** Encode a proof as the `SolvencyProof` contract struct. */
+declare function solvencyProofVal(proof: SolvencyProof): xdr.ScVal;
+/**
+ * Install (or rotate) the Groth16 verifying key used by
+ * `PaymentChannel.verify_solvency_proof`.
+ *
+ * Admin-only, and the **first** caller to set a key becomes the admin for
+ * every future rotation — mirroring `set_circuit_breaker`. A key set by
+ * someone who is not the recorded admin reverts, and so does one whose
+ * `gamma_abc_g1` is not exactly {@link GAMMA_ABC_G1_SIZE} long.
+ */
+declare function setSolvencyVk(invoke: InvokeFn, paymentChannel: string, address: string, vk: SolvencyVerifyingKey): Promise<TxResult>;
+/**
+ * Verify a Groth16 solvency proof against a channel's own
+ * `limit_per_period` and `total_spent`.
+ *
+ * Read-only, and returns `false` rather than throwing for a proof that does
+ * not verify — an invalid proof is the expected answer, not an error. It still
+ * *throws* when no verifying key has been configured, because that is a
+ * deployment gap rather than a statement about the proof.
+ */
+declare function verifySolvencyProof(invoke: InvokeFn, paymentChannel: string, channelId: bigint, proof: SolvencyProof): Promise<boolean>;
+
+/**
+ * A Groth16 verifying key for the solvency circuit (see
+ * `zk/solvency_proof`), encoded as native BLS12-381 points so it can be
+ * checked on-chain via `env.crypto().bls12_381().pairing_check`.
+ * `gamma_abc_g1` must have exactly 3 entries: the constant term followed
+ * by one entry per public input (`limit_per_period`, `total_spent`, in
+ * that order), per the circuit's declared public inputs.
+ */
+interface RawSolvencyVerifyingKey {
+    alpha_g1: Uint8Array;
+    beta_g2: Uint8Array;
+    delta_g2: Uint8Array;
+    gamma_abc_g1: Uint8Array[];
+    gamma_g2: Uint8Array;
+}
+declare function decodeSolvencyVerifyingKey(value: unknown): RawSolvencyVerifyingKey;
+/** A Groth16 proof for the solvency circuit. */
+interface RawSolvencyProof {
+    a: Uint8Array;
+    b: Uint8Array;
+    c: Uint8Array;
+}
+declare function decodeSolvencyProof(value: unknown): RawSolvencyProof;
+
+/**
  * Main SDK class for AI Agent payment operations on Stellar.
  *
  * @example
@@ -2023,11 +2460,12 @@ declare class StellarAgent {
      * Pay for an API call. Deducts from the active payment channel.
      * Respects on-chain spend limits automatically.
      *
-     * If `destAsset` differs from the channel's settlement asset, this
-     * settles the recipient in `destAsset` instead — e.g. a channel funded
-     * in USDC paying a provider that only accepts XLM — by invoking
-     * `PaymentChannel.pay_with_conversion` rather than `pay`. The spend
-     * limit is still enforced in the channel's settlement asset either way.
+     * If `recipientAsset` differs from the channel's settlement asset and
+     * routing providers are configured, this discovers, scores, and executes
+     * one direct, AMM, path-payment-adapter, or bounded multi-hop route through
+     * `PaymentChannel.pay_with_route`. A quote returned by {@link quote} may be
+     * supplied as `route` so the reviewed route is exactly the one submitted.
+     * Spend limits remain denominated in the channel's settlement asset.
      *
      * @example
      * ```typescript
@@ -2037,17 +2475,25 @@ declare class StellarAgent {
      *   asset: 'USDC',
      * });
      *
-     * // Channel funded in USDC, provider only accepts XLM:
+     * // Channel funded in XLM, provider only accepts USDC. The configured
+     * // routing providers choose the route and derive the output floor:
+     * const quote = await agent.quote({
+     *   sourceAsset: 'XLM',
+     *   destinationAsset: 'USDC',
+     *   amount: '0.001',
+     * });
      * await agent.payForAPI({
      *   endpoint: 'https://api.example.com/inference',
      *   amount: '0.001',
-     *   asset: 'USDC',
-     *   destAsset: 'XLM',
-     *   minReceived: '0.009', // slippage floor, in XLM
+     *   sourceAsset: 'XLM',
+     *   recipientAsset: 'USDC',
+     *   route: quote,
      * });
      * ```
      */
     payForAPI(params: PayForAPIParams): Promise<TxResult>;
+    /** Discover, score, and return the exact payment route before committing. */
+    quote(params: QuoteParams): Promise<PaymentQuote>;
     /**
      * Create an escrow job delegating work to another agent.
      * Locks payment until the work is delivered and released.
@@ -2122,6 +2568,54 @@ declare class StellarAgent {
      * estimate. See `ledgerTime.ts` for the derivation and its caveats.
      */
     getLedgerCloseEstimate(): Promise<LedgerCloseEstimate>;
+    /**
+     * Install (or rotate) the Groth16 verifying key that
+     * {@link StellarAgent.verifySolvencyProof} checks proofs against.
+     *
+     * Admin-only: the **first** caller to set a key becomes the admin for every
+     * future rotation, mirroring `setCircuitBreaker`. Rotating the key is
+     * therefore a one-way door unless the channel is redeployed — set it from
+     * the same key you would want to trust in six months.
+     *
+     * @example
+     * ```typescript
+     * // From the prover's output — see zk/solvency_proof.
+     * await agent.setSolvencyVk({
+     *   alphaG1: vk.alphaG1,     // 96 bytes
+     *   betaG2: vk.betaG2,       // 192 bytes
+     *   gammaG2: vk.gammaG2,     // 192 bytes
+     *   deltaG2: vk.deltaG2,     // 192 bytes
+     *   gammaAbcG1: vk.gammaAbcG1, // exactly 3 × 96 bytes
+     * });
+     * ```
+     *
+     * @throws {StellarAgentError} `INVALID_ARGUMENT` when a point is not a
+     *   96/192-byte Soroban-encoded BLS12-381 point, or when `gammaAbcG1` does
+     *   not hold exactly three entries.
+     */
+    setSolvencyVk(vk: SolvencyVerifyingKey): Promise<TxResult>;
+    /**
+     * Verify a Groth16 solvency proof for `channelId` (read-only).
+     *
+     * A valid proof says that *some* ordering of undisclosed payments into
+     * spend-limit periods never exceeded the channel's `limitPerPeriod`, and
+     * that those payments sum to exactly its `totalSpent` — a statement about
+     * the *existence* of a consistent history, not about which payments those
+     * were. See `docs/zk-solvency-design.md`.
+     *
+     * Returns `false` for a proof that does not verify; that is the expected
+     * answer, not an error. It throws only when no verifying key has been set
+     * on the contract yet — `setSolvencyVk` — which is a deployment gap rather
+     * than a property of the proof.
+     *
+     * @example
+     * ```typescript
+     * const ok = await agent.verifySolvencyProof(channelId, {
+     *   a: proof.a, b: proof.b, c: proof.c,
+     * });
+     * ```
+     */
+    verifySolvencyProof(channelId: bigint, proof: SolvencyProof): Promise<boolean>;
 }
 
-export { type AgentBid, type AgentEvent, type AgentInfo, type AttestRankBidsOptions, type AttestedRanking, BPS_SCALE, type BidAttestation, type BidAttestationVerification, type BidWeights, type BlockReason, CONTRACT_KEYS, CallbackFeeStrategy, type ChannelAccount, type ChannelAccountFactory, type ChannelAccountLease, ChannelAccountPool, type ChannelAccountPoolOptions, type ChannelInfo, type ChannelLeaseOutcome, ChannelPoolError, type ChannelPoolStats, type ChannelSpendState, CircuitBreaker, type CircuitBreakerOptions, type ContractAddresses, type ContractKey, ContractsNotDeployedError, DEFAULT_BID_WEIGHTS, FALLBACK_LEDGER_CLOSE_SECONDS, type FeeBumpConfig, type FeeCallback, type FeeContext, type FeeDistribution, type FeePercentile, type FeePhase, type FeeStats, type FeeStrategy, FixedFeeStrategy, InMemoryMetrics, InMemoryTracer, type JobInfo, type JobStatus, KeypairSigner, LEDGERS_PER_CHANNEL_PERIOD, type LeaseOptions, type LedgerCloseEstimate, type LedgerCloseSample, type Logger, MetricNames, type Metrics, MultiplierFeeStrategy, type Network, type NetworkConfig, type OpenChannelParams, type OtelBridgeOptions, type PayForAPIParams, type PaymentPrediction, type PaymentTraceRecord, type PredictPaymentOutcomeParams, type PublicAddress, RATE_LIMIT_LEDGERS_PER_DAY, RATE_LIMIT_LEDGERS_PER_HOUR, type RateLimitConfig, type RateLimitSpendState, type RateLimitStatus, RecentFeeStrategy, type RecentFeeStrategyOptions, type RecordedSpan, RedactingLogger, RemoteSigner, type RemoteSignerOptions, type RequestWorkParams, type RetryClassification, type RetryClassifier, SEMCONV_VERSION, STROOP_SCALE, type ScoredBid, type ScorerKeyDirectory, type ScorerKeyRecord, SemConv, type Sep43Like, type SignAuthEntryOptions, type SignTransactionOptions, type Signer, SignerAdapter, SigningError, SpanNames, type SpendLimit, type SpendPeriod, type SpendReport, type SponsorRpc, SponsorService, type SponsorServiceOptions, type SponsoredAccountOptions, SponsoredChannelAccountFactory, SponsorshipError, type SponsorshipRecord, StellarAgent, type StellarAgentConfig, StellarAgentError, type StellarAgentErrorCode, type SubmissionPipelineConfig, SubmissionQueue, SubmissionQueueError, type SubmissionQueueOptions, type SubmissionQueueStats, type SubmitOptions, type TelemetryConfig, type TelemetryContext, type Tracer, type TxResult, UNCONFIGURED_CONTRACTS, type VerifyBidAttestationOptions, activePaymentTraceCount, add, asFeeStrategy, asPublicAddress, assertDeployed, attachTransactionHash, attestRankBids, bn, clamp, classifySubmissionError, clearPaymentTraceRegistry, createOtelBridge, createPaymentId, createTelemetry, div, envVarNames, eq, estimateLedgerCloseSeconds, estimateSecondsRemaining, fetchLedgerCloseEstimate, fmt, fromStroops, getPaymentTrace, getTelemetry, gt, gte, initTelemetry, isDeployedAddress, isPositive, isSigner, isWindowExpired, isWithinSpendLimit, isZero, ledgersRemainingInWindow, lookupPaymentIdByTxHash, lt, lte, index as math, mul, noopLogger, noopMetrics, noopTracer, pct, predictPaymentOutcome, rankBids, redactForExport, registerPaymentTrace, remainingBudget, resolveContracts, scoreBid, selectBestBid, sub, sumStrings, toStr, toStroops, verifyBidAttestation };
+export { type AgentBid, type AgentEvent, type AgentInfo, type AmmHopQuote, type AmmPair, type AmmQuoteCallback, AmmRouteProvider, type AttestRankBidsOptions, type AttestedRanking, BPS_SCALE, type BidAttestation, type BidAttestationVerification, type BidWeights, type BlockReason, CONTRACT_KEYS, CallbackFeeStrategy, CallbackRouteProvider, type ChannelAccount, type ChannelAccountFactory, type ChannelAccountLease, ChannelAccountPool, type ChannelAccountPoolOptions, type ChannelInfo, type ChannelLeaseOutcome, ChannelPoolError, type ChannelPoolStats, type ChannelSpendState, CircuitBreaker, type CircuitBreakerOptions, type ContractAddresses, type ContractKey, ContractsNotDeployedError, DEFAULT_BID_WEIGHTS, DEFAULT_ROUTING_POLICY, DirectRouteProvider, FALLBACK_LEDGER_CLOSE_SECONDS, FP2_SIZE, FP_SIZE, FR_SIZE, type FeeBumpConfig, type FeeCallback, type FeeContext, type FeeDistribution, type FeePercentile, type FeePhase, type FeeStats, type FeeStrategy, FixedFeeStrategy, G1_POINT_SIZE, G2_POINT_SIZE, GAMMA_ABC_G1_SIZE, InMemoryMetrics, InMemoryTracer, type JobInfo, type JobStatus, KeypairSigner, LEDGERS_PER_CHANNEL_PERIOD, type LeaseOptions, type LedgerCloseEstimate, type LedgerCloseSample, type Logger, MetricNames, type Metrics, MultiplierFeeStrategy, type Network, type NetworkConfig, type OpenChannelParams, type OracleReference, type OtelBridgeOptions, type PathPaymentCandidate, type PathPaymentQuoteCallback, type PayForAPIParams, type PaymentPrediction, type PaymentQuote, type PaymentQuoteRequest, type PaymentTraceRecord, type PredictPaymentOutcomeParams, type PublicAddress, type QuoteParams, RATE_LIMIT_LEDGERS_PER_DAY, RATE_LIMIT_LEDGERS_PER_HOUR, ROUTING_WEIGHT_SCALE, type RateLimitConfig, type RateLimitSpendState, type RateLimitStatus, type RawSolvencyProof, type RawSolvencyVerifyingKey, RecentFeeStrategy, type RecentFeeStrategyOptions, type RecordedSpan, RedactingLogger, RemoteSigner, type RemoteSignerOptions, type RequestWorkParams, type RetryClassification, type RetryClassifier, type RouteDiscoveryFailure, type RouteDiscoveryOptions, type RouteDiscoveryResult, type RouteHop, RoutePlanner, type RoutePlannerOptions, type RoutePriceOracle, type RouteProvider, type RouteProviderContext, type RouteQuote, type RouteRequest, type RouteScoreBreakdown, type RouteUnavailableCode, RouteUnavailableError, type RouteVenue, type RoutingPolicy, SEMCONV_VERSION, SOLVENCY_PUBLIC_INPUTS, SOROBAN_G1_GENERATOR, STROOP_SCALE, type ScoredBid, type ScoredRoute, type ScorerKeyDirectory, type ScorerKeyRecord, SemConv, type Sep43Like, type SignAuthEntryOptions, type SignTransactionOptions, type Signer, SignerAdapter, SigningError, type SolvencyG1Point, type SolvencyG2Point, type SolvencyProof, type SolvencyVerifyingKey, SpanNames, type SpendLimit, type SpendPeriod, type SpendReport, type SponsorRpc, SponsorService, type SponsorServiceOptions, type SponsoredAccountOptions, SponsoredChannelAccountFactory, SponsorshipError, type SponsorshipRecord, StellarAgent, type StellarAgentConfig, StellarAgentError, type StellarAgentErrorCode, StellarPathPaymentProvider, type SubmissionPipelineConfig, SubmissionQueue, SubmissionQueueError, type SubmissionQueueOptions, type SubmissionQueueStats, type SubmitOptions, type TelemetryConfig, type TelemetryContext, type Tracer, type TxResult, UNCONFIGURED_CONTRACTS, type VerifyBidAttestationOptions, activePaymentTraceCount, add, applyOracleReference, asFeeStrategy, asPublicAddress, assertDeployed, attachTransactionHash, attestRankBids, bn, canonicalRouteId, clamp, classifySubmissionError, clearPaymentTraceRegistry, createOtelBridge, createPaymentId, createTelemetry, decodeSolvencyProof, decodeSolvencyVerifyingKey, discoverRoutes, div, envVarNames, eq, estimateLedgerCloseSeconds, estimateSecondsRemaining, fetchLedgerCloseEstimate, fmt, fromStroops, g1Generator, g1Infinity, getPaymentTrace, getTelemetry, gt, gte, initTelemetry, isDeployedAddress, isPositive, isRouteEligible, isSigner, isWindowExpired, isWithinSpendLimit, isZero, ledgersRemainingInWindow, lookupPaymentIdByTxHash, lt, lte, index as math, mul, noopLogger, noopMetrics, noopTracer, normalizeRoute, pct, predictPaymentOutcome, rankBids, rankRoutes, redactForExport, registerPaymentTrace, remainingBudget, resolveContracts, scoreBid, scoreRoute, selectBestBid, selectRoute, setSolvencyVk, solvencyProofVal, solvencyVerifyingKeyVal, sub, sumStrings, toSolvencyG1, toSolvencyG2, toStr, toStroops, validateRoutingPolicy, verifyBidAttestation, verifySolvencyProof };

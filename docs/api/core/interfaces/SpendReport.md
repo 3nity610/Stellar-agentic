@@ -6,7 +6,7 @@
 
 # Interface: SpendReport
 
-Defined in: [types/index.ts:254](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L254)
+Defined in: [types/index.ts:279](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L279)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [types/index.ts:254](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > **spentThisPeriod**: `string`
 
-Defined in: [types/index.ts:255](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L255)
+Defined in: [types/index.ts:280](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L280)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [types/index.ts:255](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > **remainingThisPeriod**: `string`
 
-Defined in: [types/index.ts:256](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L256)
+Defined in: [types/index.ts:281](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L281)
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: [types/index.ts:256](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > **totalLifetime**: `string`
 
-Defined in: [types/index.ts:257](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L257)
+Defined in: [types/index.ts:282](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L282)

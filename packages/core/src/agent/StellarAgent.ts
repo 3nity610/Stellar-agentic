@@ -15,13 +15,18 @@ import type {
   SpendReport,
   TxResult,
   ContractAddresses,
+  QuoteParams,
+  PredictPaymentParams,
 } from '../types/index.js';
+import { predictPaymentOutcome, type PaymentPrediction } from '../math/predict.js';
+import { toChannelSpendState, toRateLimitSpendState } from './decoding.js';
 import { NETWORK_CONFIGS } from '../types/index.js';
 import { StellarAgentError } from '../errors.js';
 import { resolveContracts, assertDeployed } from '../contracts.js';
 import { KeypairSigner, SigningError } from '../signer.js';
 import type { Signer } from '../signer.js';
 import type { LedgerCloseEstimate } from '../ledgerTime.js';
+import type { SolvencyProof, SolvencyVerifyingKey } from './solvency.js';
 import { initTelemetry } from '../telemetry/index.js';
 import type { TelemetryContext } from '../telemetry/index.js';
 import { asFeeStrategy, RecentFeeStrategy } from '../fleet/feeStrategy.js';
@@ -33,11 +38,16 @@ import { SponsoredChannelAccountFactory } from '../fleet/sponsorship.js';
 import type { ChannelPoolStats } from '../fleet/channelPool.js';
 import type { SubmissionQueueStats } from '../fleet/submissionQueue.js';
 import type { InvocationFeeBumpConfig } from './invocation.js';
+import { RoutePlanner } from '../routing/planner.js';
+import type { PaymentQuote } from '../routing/planner.js';
+import type { RouteQuote } from '../routing/types.js';
+import { toStroops } from '../math/fixed-point.js';
 
 import { createNetworkClients, fundFromFriendbot } from './config.js';
 import { getLatestLedger, runInvocation } from './invocation.js';
 import * as queries from './queries.js';
 import * as mutations from './mutations.js';
+import * as solvency from './solvency.js';
 
 /**
  * Main SDK class for AI Agent payment operations on Stellar.
@@ -80,6 +90,7 @@ export class StellarAgent {
   private sponsorService?: SponsorService;
   private submissionQueue: SubmissionQueue;
   private ownsSubmissionQueue: boolean;
+  private routePlanner?: RoutePlanner;
 
   private constructor(
     signer: Signer,
@@ -94,6 +105,7 @@ export class StellarAgent {
     sponsorService: SponsorService | undefined,
     submissionQueue: SubmissionQueue,
     ownsSubmissionQueue: boolean,
+    routePlanner: RoutePlanner | undefined,
   ) {
     this.signer = signer;
     this.publicKey = publicKey;
@@ -107,6 +119,7 @@ export class StellarAgent {
     this.sponsorService = sponsorService;
     this.submissionQueue = submissionQueue;
     this.ownsSubmissionQueue = ownsSubmissionQueue;
+    this.routePlanner = routePlanner;
     const { horizon, rpc } = createNetworkClients(networkConfig);
     this.horizon = horizon;
     this.rpc = rpc;
@@ -234,6 +247,7 @@ export class StellarAgent {
       classifyError: config.submission?.classifyError,
       metrics: telemetry.metrics,
     });
+    const routePlanner = config.routing ? new RoutePlanner(config.routing) : undefined;
 
     const agent = new StellarAgent(
       signer,
@@ -248,6 +262,7 @@ export class StellarAgent {
       config.sponsorService,
       submissionQueue,
       !config.submissionQueue,
+      routePlanner,
     );
 
     // Only a freshly generated keypair gets friendbot funding — a supplied
@@ -415,11 +430,12 @@ export class StellarAgent {
    * Pay for an API call. Deducts from the active payment channel.
    * Respects on-chain spend limits automatically.
    *
-   * If `destAsset` differs from the channel's settlement asset, this
-   * settles the recipient in `destAsset` instead — e.g. a channel funded
-   * in USDC paying a provider that only accepts XLM — by invoking
-   * `PaymentChannel.pay_with_conversion` rather than `pay`. The spend
-   * limit is still enforced in the channel's settlement asset either way.
+   * If `recipientAsset` differs from the channel's settlement asset and
+   * routing providers are configured, this discovers, scores, and executes
+   * one direct, AMM, path-payment-adapter, or bounded multi-hop route through
+   * `PaymentChannel.pay_with_route`. A quote returned by {@link quote} may be
+   * supplied as `route` so the reviewed route is exactly the one submitted.
+   * Spend limits remain denominated in the channel's settlement asset.
    *
    * @example
    * ```typescript
@@ -429,13 +445,19 @@ export class StellarAgent {
    *   asset: 'USDC',
    * });
    *
-   * // Channel funded in USDC, provider only accepts XLM:
+   * // Channel funded in XLM, provider only accepts USDC. The configured
+   * // routing providers choose the route and derive the output floor:
+   * const quote = await agent.quote({
+   *   sourceAsset: 'XLM',
+   *   destinationAsset: 'USDC',
+   *   amount: '0.001',
+   * });
    * await agent.payForAPI({
    *   endpoint: 'https://api.example.com/inference',
    *   amount: '0.001',
-   *   asset: 'USDC',
-   *   destAsset: 'XLM',
-   *   minReceived: '0.009', // slippage floor, in XLM
+   *   sourceAsset: 'XLM',
+   *   recipientAsset: 'USDC',
+   *   route: quote,
    * });
    * ```
    */
@@ -447,6 +469,61 @@ export class StellarAgent {
         'No active payment channel. Call openChannel() first.',
       );
     }
+    const sourceAsset = coalesceAssetAlias(
+      params.sourceAsset,
+      params.asset,
+      'sourceAsset',
+      'asset',
+    ) ?? 'XLM';
+    const destinationAsset = coalesceAssetAlias(
+      params.recipientAsset,
+      params.destAsset,
+      'recipientAsset',
+      'destAsset',
+    );
+    let routed: mutations.RoutedPaymentExecution | undefined;
+    if (destinationAsset && (params.route || this.routePlanner)) {
+      const currentLedger = await this.getLatestLedger();
+      const planner = this.routePlanner ?? new RoutePlanner({ providers: [] });
+      const request = {
+        sourceAsset,
+        destinationAsset,
+        sourceAmount: toStroops(params.amount).toString(),
+        currentLedger,
+        ...(params.allowedIntermediates
+          ? { allowedIntermediates: params.allowedIntermediates }
+          : {}),
+        ...(params.slippageToleranceBps !== undefined
+          ? { slippageToleranceBps: params.slippageToleranceBps }
+          : {}),
+      };
+
+      let quote: PaymentQuote;
+      if (params.route && isPaymentQuote(params.route)) {
+        const validated = planner.quoteOverride(request, params.route.route);
+        planner.assertFresh(params.route, currentLedger);
+        if (BigInt(params.route.minimumDestinationAmount) <
+          BigInt(validated.minimumDestinationAmount)) {
+          throw new StellarAgentError(
+            'INVALID_ROUTE_OVERRIDE',
+            'Payment quote minimum is below the configured slippage floor',
+          );
+        }
+        quote = params.route;
+      } else if (params.route) {
+        quote = planner.quoteOverride(request, params.route);
+      } else {
+        quote = await planner.quote(request);
+      }
+      if (params.minReceived !== undefined) {
+        const callerMinimum = toStroops(params.minReceived).toString();
+        if (BigInt(callerMinimum) > BigInt(quote.minimumDestinationAmount)) {
+          quote = { ...quote, minimumDestinationAmount: callerMinimum };
+        }
+      }
+      routed = { quote };
+    }
+
     return mutations.payForAPI(
       this.invokeContract.bind(this),
       this.contracts.paymentChannel,
@@ -454,8 +531,32 @@ export class StellarAgent {
       this.assetContracts,
       this.networkConfig.networkPassphrase,
       channelId,
-      params,
+      { ...params, sourceAsset, ...(destinationAsset ? { recipientAsset: destinationAsset } : {}) },
+      routed,
     );
+  }
+
+  /** Discover, score, and return the exact payment route before committing. */
+  async quote(params: QuoteParams): Promise<PaymentQuote> {
+    if (!this.routePlanner) {
+      throw new StellarAgentError(
+        'NO_ROUTE',
+        'No routing providers are configured for this agent',
+      );
+    }
+    const currentLedger = await this.getLatestLedger();
+    return this.routePlanner.quote({
+      sourceAsset: params.sourceAsset,
+      destinationAsset: params.destinationAsset,
+      sourceAmount: toStroops(params.amount).toString(),
+      currentLedger,
+      ...(params.allowedIntermediates
+        ? { allowedIntermediates: params.allowedIntermediates }
+        : {}),
+      ...(params.slippageToleranceBps !== undefined
+        ? { slippageToleranceBps: params.slippageToleranceBps }
+        : {}),
+    });
   }
 
   // ── Agent-to-Agent Escrow ────────────────────────────────────────────────
@@ -542,8 +643,8 @@ export class StellarAgent {
   /**
    * Get spend report for the current period
    */
-  async getSpendReport(): Promise<SpendReport> {
-    return queries.getSpendReport(this.invokeContract.bind(this), this.contracts.paymentChannel, this.activeChannelId);
+  async getSpendReport(channelId = this.activeChannelId): Promise<SpendReport> {
+    return queries.getSpendReport(this.invokeContract.bind(this), this.contracts.paymentChannel, channelId);
   }
 
   /**
@@ -588,6 +689,106 @@ export class StellarAgent {
     return queries.getLedgerCloseEstimate(this.networkConfig.horizonUrl);
   }
 
+  /**
+   * Pre-flight prediction of whether a proposed payment would be blocked by
+   * either a payment channel's spend limit or a configured rate limiter,
+   * computed from on-chain channel, rate-limit, and ledger state.
+   *
+   * Gathers channel state (via {@link StellarAgent.getChannel}), rate-limit
+   * status (via {@link StellarAgent.getRateLimitStatus}), and current ledger
+   * sequence without making state mutations or paying transaction fees.
+   *
+   * @param params Prediction parameters including the proposed payment amount.
+   * @returns Prediction outcome indicating whether the payment would block and why.
+   */
+  async predictPayment(params: PredictPaymentParams): Promise<PaymentPrediction> {
+    const channelId = params.channelId === null ? undefined : (params.channelId ?? this.activeChannelId);
+    const [channel, rateLimit, currentLedger] = await Promise.all([
+      channelId !== undefined ? this.getChannel(channelId) : Promise.resolve(null),
+      this.getRateLimitStatus(params.agentAddress ?? this.address),
+      this.getLatestLedger(),
+    ]);
+
+    const channelState = channel ? toChannelSpendState(channel) : null;
+    const rateLimitState = toRateLimitSpendState(rateLimit);
+
+    return predictPaymentOutcome({
+      channelState,
+      rateLimitState,
+      amount: params.amount,
+      currentLedger,
+    });
+  }
+
+  // ── Solvency proofs (ZK) ─────────────────────────────────────────────────
+
+  /**
+   * Install (or rotate) the Groth16 verifying key that
+   * {@link StellarAgent.verifySolvencyProof} checks proofs against.
+   *
+   * Admin-only: the **first** caller to set a key becomes the admin for every
+   * future rotation, mirroring `setCircuitBreaker`. Rotating the key is
+   * therefore a one-way door unless the channel is redeployed — set it from
+   * the same key you would want to trust in six months.
+   *
+   * @example
+   * ```typescript
+   * // From the prover's output — see zk/solvency_proof.
+   * await agent.setSolvencyVk({
+   *   alphaG1: vk.alphaG1,     // 96 bytes
+   *   betaG2: vk.betaG2,       // 192 bytes
+   *   gammaG2: vk.gammaG2,     // 192 bytes
+   *   deltaG2: vk.deltaG2,     // 192 bytes
+   *   gammaAbcG1: vk.gammaAbcG1, // exactly 3 × 96 bytes
+   * });
+   * ```
+   *
+   * @throws {StellarAgentError} `INVALID_ARGUMENT` when a point is not a
+   *   96/192-byte Soroban-encoded BLS12-381 point, or when `gammaAbcG1` does
+   *   not hold exactly three entries.
+   */
+  async setSolvencyVk(vk: SolvencyVerifyingKey): Promise<TxResult> {
+    return solvency.setSolvencyVk(
+      this.invokeContract.bind(this),
+      this.contracts.paymentChannel,
+      this.address,
+      vk,
+    );
+  }
+
+  /**
+   * Verify a Groth16 solvency proof for `channelId` (read-only).
+   *
+   * A valid proof says that *some* ordering of undisclosed payments into
+   * spend-limit periods never exceeded the channel's `limitPerPeriod`, and
+   * that those payments sum to exactly its `totalSpent` — a statement about
+   * the *existence* of a consistent history, not about which payments those
+   * were. See `docs/zk-solvency-design.md`.
+   *
+   * Returns `false` for a proof that does not verify; that is the expected
+   * answer, not an error. It throws only when no verifying key has been set
+   * on the contract yet — `setSolvencyVk` — which is a deployment gap rather
+   * than a property of the proof.
+   *
+   * @example
+   * ```typescript
+   * const ok = await agent.verifySolvencyProof(channelId, {
+   *   a: proof.a, b: proof.b, c: proof.c,
+   * });
+   * ```
+   */
+  async verifySolvencyProof(
+    channelId: bigint,
+    proof: SolvencyProof,
+  ): Promise<boolean> {
+    return solvency.verifySolvencyProof(
+      this.invokeContract.bind(this),
+      this.contracts.paymentChannel,
+      channelId,
+      proof,
+    );
+  }
+
   // ── Internals ────────────────────────────────────────────────────────────
 
   /**
@@ -624,4 +825,23 @@ export class StellarAgent {
   private async getLatestLedger(): Promise<number> {
     return getLatestLedger(this.rpc);
   }
+}
+
+function isPaymentQuote(value: PaymentQuote | RouteQuote): value is PaymentQuote {
+  return 'route' in value && 'minimumDestinationAmount' in value && 'validUntilLedger' in value;
+}
+
+function coalesceAssetAlias(
+  preferred: string | undefined,
+  legacy: string | undefined,
+  preferredName: string,
+  legacyName: string,
+): string | undefined {
+  if (preferred && legacy && preferred !== legacy) {
+    throw new StellarAgentError(
+      'INVALID_ARGUMENT',
+      `${preferredName} and ${legacyName} must refer to the same asset`,
+    );
+  }
+  return preferred ?? legacy;
 }

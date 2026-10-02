@@ -280,6 +280,35 @@
     }
   },
   {
+    "udt_struct_v0": {
+      "doc": "One contract-backed swap in an explicit conversion route.\\n\\n`venue` implements the same `execute_swap(from_token, from_amount,\\nto_token, min_out, to)` interface as `AmmSwap`. A Stellar path-payment\\nbridge can therefore participate without the payment channel confusing a\\nreference oracle with executable liquidity.",
+      "lib": "",
+      "name": "SwapHop",
+      "fields": [
+        {
+          "doc": "",
+          "name": "from_token",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "min_out",
+          "type_": "i128"
+        },
+        {
+          "doc": "",
+          "name": "to_token",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "venue",
+          "type_": "address"
+        }
+      ]
+    }
+  },
+  {
     "function_v0": {
       "doc": "",
       "name": "get_channel",
@@ -515,6 +544,70 @@
             }
           }
         }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Execute an explicit direct or multi-hop route atomically.\\n\\nEvery venue call occurs within this one Soroban invocation. A panic at\\nany hop, a malformed route, expiry, or a final amount below\\n`min_received` reverts all token transfers and channel accounting.\\nThe independent oracle bound applies source-to-destination, not once\\nper hop, so individually plausible hops cannot compose into an\\nunacceptable final payment.\\n\\n`amount` and spend accounting remain denominated in the channel token.\\nAn empty route is valid only for a same-asset payment. Cross-asset\\nroutes contain at most [`MAX_ROUTE_HOPS`] continuous, acyclic hops.",
+      "name": "pay_with_route",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "agent",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "channel_id",
+          "type_": "u64"
+        },
+        {
+          "doc": "",
+          "name": "recipient",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "amount",
+          "type_": "i128"
+        },
+        {
+          "doc": "",
+          "name": "dest_token",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "route",
+          "type_": {
+            "vec": {
+              "element_type": {
+                "udt": {
+                  "name": "SwapHop"
+                }
+              }
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "min_received",
+          "type_": "i128"
+        },
+        {
+          "doc": "",
+          "name": "valid_until_ledger",
+          "type_": "u32"
+        },
+        {
+          "doc": "",
+          "name": "memo",
+          "type_": "bytes"
+        }
+      ],
+      "outputs": [
+        "i128"
       ]
     }
   },

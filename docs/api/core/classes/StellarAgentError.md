@@ -6,7 +6,7 @@
 
 # Class: StellarAgentError
 
-Defined in: [errors.ts:99](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/errors.ts#L99)
+Defined in: [errors.ts:26](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/errors.ts#L26)
 
 Error thrown for SDK validation, Soroban RPC, and contract failures.
 
@@ -20,7 +20,7 @@ Error thrown for SDK validation, Soroban RPC, and contract failures.
 
 > **new StellarAgentError**(`code`, `message`, `options?`): `StellarAgentError`
 
-Defined in: [errors.ts:104](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/errors.ts#L104)
+Defined in: [errors.ts:31](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/errors.ts#L31)
 
 #### Parameters
 
@@ -56,7 +56,7 @@ Defined in: [errors.ts:104](https://github.com/StellarAgent-AI-Agent-Payment-Rai
 
 > `readonly` **code**: [`StellarAgentErrorCode`](../type-aliases/StellarAgentErrorCode.md)
 
-Defined in: [errors.ts:100](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/errors.ts#L100)
+Defined in: [errors.ts:27](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/errors.ts#L27)
 
 ***
 
@@ -64,7 +64,7 @@ Defined in: [errors.ts:100](https://github.com/StellarAgent-AI-Agent-Payment-Rai
 
 > `readonly` `optional` **cause?**: `unknown`
 
-Defined in: [errors.ts:101](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/errors.ts#L101)
+Defined in: [errors.ts:28](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/errors.ts#L28)
 
 ***
 
@@ -72,4 +72,4 @@ Defined in: [errors.ts:101](https://github.com/StellarAgent-AI-Agent-Payment-Rai
 
 > `readonly` `optional` **transactionHash?**: `string`
 
-Defined in: [errors.ts:102](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/errors.ts#L102)
+Defined in: [errors.ts:29](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/errors.ts#L29)

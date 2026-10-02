@@ -20,6 +20,9 @@
 - [RateLimitSpendState](interfaces/RateLimitSpendState.md)
 - [PredictPaymentOutcomeParams](interfaces/PredictPaymentOutcomeParams.md)
 - [PaymentPrediction](interfaces/PaymentPrediction.md)
+- [RoutingPolicy](interfaces/RoutingPolicy.md)
+- [RouteScoreBreakdown](interfaces/RouteScoreBreakdown.md)
+- [ScoredRoute](interfaces/ScoredRoute.md)
 
 ## Type Aliases
 
@@ -35,6 +38,8 @@
 - [LEDGERS\_PER\_CHANNEL\_PERIOD](variables/LEDGERS_PER_CHANNEL_PERIOD.md)
 - [RATE\_LIMIT\_LEDGERS\_PER\_HOUR](variables/RATE_LIMIT_LEDGERS_PER_HOUR.md)
 - [RATE\_LIMIT\_LEDGERS\_PER\_DAY](variables/RATE_LIMIT_LEDGERS_PER_DAY.md)
+- [ROUTING\_WEIGHT\_SCALE](variables/ROUTING_WEIGHT_SCALE.md)
+- [DEFAULT\_ROUTING\_POLICY](variables/DEFAULT_ROUTING_POLICY.md)
 
 ## Functions
 
@@ -67,3 +72,8 @@
 - [isWindowExpired](functions/isWindowExpired.md)
 - [ledgersRemainingInWindow](functions/ledgersRemainingInWindow.md)
 - [predictPaymentOutcome](functions/predictPaymentOutcome.md)
+- [scoreRoute](functions/scoreRoute.md)
+- [isRouteEligible](functions/isRouteEligible.md)
+- [rankRoutes](functions/rankRoutes.md)
+- [selectRoute](functions/selectRoute.md)
+- [validateRoutingPolicy](functions/validateRoutingPolicy.md)

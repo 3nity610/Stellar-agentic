@@ -5,6 +5,8 @@ import {
   bytesVal,
   enumVal,
   i128Val,
+  i128BaseUnitsVal,
+  paymentRouteVal,
   resolveAssetContract,
   spendPeriodVariant,
   u32Val,
@@ -14,6 +16,7 @@ import { StellarAgentError } from '../../errors.js';
 
 const TEST_ADDRESS = Keypair.random().publicKey();
 const TEST_CONTRACT = StrKey.encodeContract(Buffer.alloc(32, 7));
+const TEST_CONTRACT_2 = StrKey.encodeContract(Buffer.alloc(32, 8));
 const NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
 
 describe('addressVal', () => {
@@ -40,6 +43,17 @@ describe('i128Val', () => {
 
   it('throws a StellarAgentError for an unparseable amount', () => {
     expect(() => i128Val('not-a-number')).toThrow(StellarAgentError);
+  });
+});
+
+describe('i128BaseUnitsVal', () => {
+  it('does not apply a second stroop conversion', () => {
+    expect(scValToNative(i128BaseUnitsVal('123456789'))).toBe(123_456_789n);
+  });
+
+  it('rejects non-canonical and overflowing integers', () => {
+    expect(() => i128BaseUnitsVal('01')).toThrow(StellarAgentError);
+    expect(() => i128BaseUnitsVal((1n << 127n).toString())).toThrow(StellarAgentError);
   });
 });
 
@@ -114,5 +128,73 @@ describe('resolveAssetContract', () => {
 
   it('throws a StellarAgentError for an asset it cannot resolve', () => {
     expect(() => resolveAssetContract('UNKNOWN', {}, NETWORK_PASSPHRASE)).toThrow(StellarAgentError);
+  });
+});
+
+describe('paymentRouteVal', () => {
+  it('encodes contract-backed hops with raw per-hop floors', () => {
+    const encoded = paymentRouteVal({
+      id: 'route',
+      sourceAsset: 'XLM',
+      destinationAsset: 'USDC',
+      sourceAmount: '10000000',
+      expectedDestinationAmount: '20000000',
+      totalFeeBps: 30,
+      expectedSlippageBps: 20,
+      reliabilityBps: 9_500,
+      hopCount: 1,
+      hops: [{
+        venue: 'amm',
+        venueId: TEST_CONTRACT_2,
+        sourceAsset: 'XLM',
+        destinationAsset: 'USDC',
+        sourceAmount: '10000000',
+        expectedOutput: '20000000',
+        feeAmount: '3000',
+        feeBps: 30,
+        slippageBps: 20,
+        reliabilityBps: 9_500,
+        minOutput: '19000000',
+      }],
+    }, { USDC: TEST_CONTRACT }, NETWORK_PASSPHRASE);
+    expect(scValToNative(encoded)).toEqual([{
+      from_token: resolveAssetContract('XLM', {}, NETWORK_PASSPHRASE),
+      min_out: 19_000_000n,
+      to_token: TEST_CONTRACT,
+      venue: TEST_CONTRACT_2,
+    }]);
+  });
+
+  it('encodes a same-asset direct route as an empty contract route', () => {
+    const encoded = paymentRouteVal({
+      id: 'direct',
+      sourceAsset: 'XLM',
+      destinationAsset: 'XLM',
+      sourceAmount: '1',
+      expectedDestinationAmount: '1',
+      totalFeeBps: 0,
+      expectedSlippageBps: 0,
+      reliabilityBps: 10_000,
+      hopCount: 1,
+      hops: [{
+        venue: 'direct', venueId: 'direct', sourceAsset: 'XLM', destinationAsset: 'XLM',
+        sourceAmount: '1', expectedOutput: '1', feeAmount: '0', feeBps: 0,
+        slippageBps: 0, reliabilityBps: 10_000,
+      }],
+    }, {}, NETWORK_PASSPHRASE);
+    expect(scValToNative(encoded)).toEqual([]);
+  });
+
+  it('rejects a cross-asset direct hop', () => {
+    expect(() => paymentRouteVal({
+      id: 'bad', sourceAsset: 'XLM', destinationAsset: 'USDC', sourceAmount: '1',
+      expectedDestinationAmount: '1', totalFeeBps: 0, expectedSlippageBps: 0,
+      reliabilityBps: 10_000, hopCount: 1,
+      hops: [{
+        venue: 'direct', venueId: 'direct', sourceAsset: 'XLM', destinationAsset: 'USDC',
+        sourceAmount: '1', expectedOutput: '1', feeAmount: '0', feeBps: 0,
+        slippageBps: 0, reliabilityBps: 10_000,
+      }],
+    }, { USDC: TEST_CONTRACT }, NETWORK_PASSPHRASE)).toThrow(/Direct route hops/);
   });
 });

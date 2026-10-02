@@ -2,6 +2,14 @@
 // concrete implementation lives in a dedicated module and is re-exported
 // here. See docs/architecture/core-modules.md for the module map and the
 // reasoning behind it.
+import {
+  runCall,
+  abortable,
+  sleep,
+  throwIfAborted,
+  DEFAULT_TIMEOUT_MS,
+  type CallOptions,
+} from './abort';
 
 // ─── Deterministic math (re-exported for consumers) ──────────────────────────
 export * as math from './math/index.js';
@@ -42,6 +50,14 @@ export {
   LEDGERS_PER_CHANNEL_PERIOD,
   RATE_LIMIT_LEDGERS_PER_HOUR,
   RATE_LIMIT_LEDGERS_PER_DAY,
+  // deterministic routing
+  ROUTING_WEIGHT_SCALE,
+  DEFAULT_ROUTING_POLICY,
+  scoreRoute,
+  isRouteEligible,
+  rankRoutes,
+  selectRoute,
+  validateRoutingPolicy,
 } from './math/index.js';
 export type {
   AgentBid,
@@ -64,6 +80,48 @@ export type {
   PaymentPrediction,
   BlockReason,
 } from './math/predict.js';
+export type {
+  RoutingPolicy,
+  RouteScoreBreakdown,
+  ScoredRoute,
+} from './math/routing.js';
+
+// ─── Multi-asset route discovery ────────────────────────────────────────────
+
+export {
+  discoverRoutes,
+  normalizeRoute,
+  canonicalRouteId,
+  applyOracleReference,
+  RouteUnavailableError,
+  DirectRouteProvider,
+  AmmRouteProvider,
+  StellarPathPaymentProvider,
+  CallbackRouteProvider,
+  RoutePlanner,
+} from './routing/index.js';
+export type {
+  RouteVenue,
+  RouteUnavailableCode,
+  RouteHop,
+  RouteQuote,
+  RouteRequest,
+  RouteProviderContext,
+  RouteProvider,
+  RoutePriceOracle,
+  OracleReference,
+  RouteDiscoveryOptions,
+  RouteDiscoveryFailure,
+  RouteDiscoveryResult,
+  AmmPair,
+  AmmHopQuote,
+  AmmQuoteCallback,
+  PathPaymentCandidate,
+  PathPaymentQuoteCallback,
+  RoutePlannerOptions,
+  PaymentQuoteRequest,
+  PaymentQuote,
+} from './routing/index.js';
 
 // ─── Ledger-window wall-clock estimation ─────────────────────────────
 //
@@ -91,6 +149,7 @@ export type {
   AgentInfo,
   OpenChannelParams,
   PayForAPIParams,
+  PredictPaymentParams,
   ChannelInfo,
   SpendReport,
   JobStatus,
@@ -103,6 +162,7 @@ export type {
   TxResult,
   FeeBumpConfig,
   SubmissionPipelineConfig,
+  QuoteParams,
 } from './types/index.js';
 
 export { StellarAgentError } from './errors.js';
@@ -249,6 +309,54 @@ export type {
   Metrics,
   RecordedSpan,
 } from './telemetry/index.js';
+
+// ─── Solvency proofs (Groth16 over BLS12-381) ─────────────────────────────────
+//
+// `PaymentChannel.set_solvency_vk` / `verify_solvency_proof` are on-chain
+// only until the SDK encodes the points for them. The encoding is not the
+// library default — arkworks and Soroban disagree about endianness and
+// Montgomery form — so it is hand-rolled here and cross-checked against
+// `soroban_sdk`'s own known-answer vector. See ./agent/solvency.ts.
+
+export {
+  setSolvencyVk,
+  verifySolvencyProof,
+  solvencyVerifyingKeyVal,
+  solvencyProofVal,
+  toSolvencyG1,
+  toSolvencyG2,
+  g1Generator,
+  g1Infinity,
+  FP_SIZE,
+  FP2_SIZE,
+  FR_SIZE,
+  G1_POINT_SIZE,
+  G2_POINT_SIZE,
+  SOLVENCY_PUBLIC_INPUTS,
+  GAMMA_ABC_G1_SIZE,
+  SOROBAN_G1_GENERATOR,
+} from './agent/solvency.js';
+export type {
+  SolvencyProof,
+  SolvencyVerifyingKey,
+  SolvencyG1Point,
+  SolvencyG2Point,
+} from './agent/solvency.js';
+
+// ─── Contract struct types (generated from contracts/specs/*.json) ───────────
+//
+// `SolvencyVerifyingKey` and `SolvencyProof` are in there too — the types
+// above are the ergonomic (camelCase, validated) view of the same shape the
+// generated decoders produce.
+
+export {
+  decodeSolvencyVerifyingKey,
+  decodeSolvencyProof,
+} from './generated/contract-types.js';
+export type {
+  RawSolvencyVerifyingKey,
+  RawSolvencyProof,
+} from './generated/contract-types.js';
 
 // ─── StellarAgent ─────────────────────────────────────────────────────────────
 //

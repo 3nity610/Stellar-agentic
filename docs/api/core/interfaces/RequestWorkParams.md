@@ -6,7 +6,7 @@
 
 # Interface: RequestWorkParams
 
-Defined in: [types/index.ts:270](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L270)
+Defined in: [types/index.ts:295](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L295)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [types/index.ts:270](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > **workerAgent**: `string`
 
-Defined in: [types/index.ts:272](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L272)
+Defined in: [types/index.ts:297](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L297)
 
 Address of the worker agent
 
@@ -24,7 +24,7 @@ Address of the worker agent
 
 > **task**: `string`
 
-Defined in: [types/index.ts:274](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L274)
+Defined in: [types/index.ts:299](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L299)
 
 Task description or IPFS hash
 
@@ -34,7 +34,7 @@ Task description or IPFS hash
 
 > **escrowAmount**: `string`
 
-Defined in: [types/index.ts:276](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L276)
+Defined in: [types/index.ts:301](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L301)
 
 Amount to lock in escrow
 
@@ -44,7 +44,7 @@ Amount to lock in escrow
 
 > `optional` **asset?**: `string`
 
-Defined in: [types/index.ts:278](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L278)
+Defined in: [types/index.ts:303](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L303)
 
 Asset to pay with
 
@@ -54,7 +54,7 @@ Asset to pay with
 
 > `optional` **deadlineLedgers?**: `number`
 
-Defined in: [types/index.ts:280](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L280)
+Defined in: [types/index.ts:305](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L305)
 
 Deadline in ledgers from now
 
@@ -64,6 +64,6 @@ Deadline in ledgers from now
 
 > `optional` **arbiter?**: `string`
 
-Defined in: [types/index.ts:282](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L282)
+Defined in: [types/index.ts:307](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L307)
 
 Optional arbiter address for disputes

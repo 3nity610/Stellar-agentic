@@ -76,6 +76,16 @@ export {
   type IndexResult,
 } from "./indexer.js";
 export {
+  IndexerProgressReporter,
+  METRICS_CONTENT_TYPE,
+  renderPrometheusMetrics,
+  type IndexerProgress,
+  type IndexerProgressReporterOptions,
+  type IndexerRunReport,
+  type MetricsStoreCounts,
+  type PrometheusMetricsOptions,
+} from "./progress.js";
+export {
   EventStore,
   type ChannelSpend,
   type JobLifecycle,

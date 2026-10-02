@@ -8,4 +8,4 @@
 
 > **JobStatus** = `"open"` \| `"in_progress"` \| `"pending_release"` \| `"completed"` \| `"refunded"` \| `"disputed"`
 
-Defined in: [types/index.ts:262](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L262)
+Defined in: [types/index.ts:287](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L287)

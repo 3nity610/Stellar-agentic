@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Keypair } from '@stellar/stellar-sdk';
 
-import { StellarAgent } from '../index.js';
+import { CallbackRouteProvider, StellarAgent } from '../index.js';
 import type { StellarAgentConfig } from '../types/index.js';
 
 import { TEST_SECRET, TEST_PUBLIC, DEPLOYED_CONTRACTS } from './fixtures.js';
@@ -440,6 +440,118 @@ describe('payForAPI — validation guards', () => {
       'pay',
       expect.any(Array),
     );
+  });
+});
+
+describe('automatic payment routing', () => {
+  async function routedAgent(): Promise<StellarAgent> {
+    return createAgent({
+      network: 'testnet',
+      secretKey: TEST_SECRET,
+      assetContracts: { USDC: DEPLOYED_CONTRACTS.rateLimiter },
+      routing: {
+        providers: [new CallbackRouteProvider('fixture-amm', async (request) => [[{
+          venue: 'amm',
+          venueId: DEPLOYED_CONTRACTS.escrow,
+          sourceAsset: request.sourceAsset,
+          destinationAsset: request.destinationAsset,
+          sourceAmount: request.sourceAmount,
+          expectedOutput: (BigInt(request.sourceAmount) * 2n).toString(),
+          feeAmount: '30',
+          feeBps: 30,
+          slippageBps: 20,
+          reliabilityBps: 9_500,
+          minOutput: (BigInt(request.sourceAmount) * 19n / 10n).toString(),
+        }]])],
+        quoteValidityLedgers: 20,
+      },
+    });
+  }
+
+  function stubLedger(agent: StellarAgent, ledger = 100) {
+    return vi.spyOn(
+      agent as unknown as { getLatestLedger: () => Promise<number> },
+      'getLatestLedger',
+    ).mockResolvedValue(ledger);
+  }
+
+  it('quote returns the selected route and total cost without submitting', async () => {
+    const agent = await routedAgent();
+    stubLedger(agent);
+    const invoke = vi.spyOn(
+      agent as unknown as { invokeContract: (...args: unknown[]) => Promise<unknown> },
+      'invokeContract',
+    );
+    const quote = await agent.quote({
+      sourceAsset: 'XLM',
+      destinationAsset: 'USDC',
+      amount: '0.001',
+    });
+    expect(quote.route.sourceAmount).toBe('10000');
+    expect(quote.route.expectedDestinationAmount).toBe('20000');
+    expect(quote.route.totalFeeBps).toBe(30);
+    expect(quote.minimumDestinationAmount).toBe('19800');
+    expect(quote.validUntilLedger).toBe(120);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('payForAPI automatically executes the exact selected route', async () => {
+    const agent = await routedAgent();
+    (agent as unknown as { activeChannelId?: bigint }).activeChannelId = 1n;
+    stubLedger(agent);
+    const invoke = vi.spyOn(
+      agent as unknown as { invokeContract: (...args: unknown[]) => Promise<unknown> },
+      'invokeContract',
+    ).mockResolvedValue({ value: 20_000n, tx: { hash: 'routed', success: true } });
+
+    const result = await agent.payForAPI({
+      endpoint: 'https://api.example.com',
+      amount: '0.001',
+      sourceAsset: 'XLM',
+      recipientAsset: 'USDC',
+    });
+    expect(invoke).toHaveBeenCalledWith(
+      DEPLOYED_CONTRACTS.paymentChannel,
+      'pay_with_route',
+      expect.any(Array),
+    );
+    expect(result).toMatchObject({
+      hash: 'routed',
+      expectedDestinationAmount: '20000',
+      minimumDestinationAmount: '19800',
+      route: { hops: [{ venueId: DEPLOYED_CONTRACTS.escrow }] },
+    });
+  });
+
+  it('reuses a displayed quote and honors a stricter caller minimum', async () => {
+    const agent = await routedAgent();
+    (agent as unknown as { activeChannelId?: bigint }).activeChannelId = 1n;
+    stubLedger(agent);
+    const quote = await agent.quote({
+      sourceAsset: 'XLM', destinationAsset: 'USDC', amount: '0.001',
+    });
+    vi.spyOn(
+      agent as unknown as { invokeContract: (...args: unknown[]) => Promise<unknown> },
+      'invokeContract',
+    ).mockResolvedValue({ value: 20_000n, tx: { hash: 'reused', success: true } });
+    const result = await agent.payForAPI({
+      endpoint: 'x', amount: '0.001', sourceAsset: 'XLM', recipientAsset: 'USDC',
+      minReceived: '0.00199', route: quote,
+    });
+    expect(result.minimumDestinationAmount).toBe('19900');
+    expect(result.route!.id).toBe(quote.route.id);
+  });
+
+  it('rejects conflicting source aliases and quote calls without providers', async () => {
+    const agent = await routedAgent();
+    (agent as unknown as { activeChannelId?: bigint }).activeChannelId = 1n;
+    await expect(agent.payForAPI({
+      endpoint: 'x', amount: '1', asset: 'USDC', sourceAsset: 'XLM',
+    })).rejects.toThrow(/sourceAsset and asset/);
+
+    const plain = await createAgent({ network: 'testnet', secretKey: TEST_SECRET });
+    await expect(plain.quote({ sourceAsset: 'XLM', destinationAsset: 'USDC', amount: '1' }))
+      .rejects.toThrow(/No routing providers/);
   });
 });
 

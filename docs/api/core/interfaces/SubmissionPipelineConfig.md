@@ -6,7 +6,7 @@
 
 # Interface: SubmissionPipelineConfig
 
-Defined in: [types/index.ts:157](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L157)
+Defined in: [types/index.ts:169](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L169)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [types/index.ts:157](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > `optional` **concurrency?**: `number`
 
-Defined in: [types/index.ts:158](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L158)
+Defined in: [types/index.ts:170](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L170)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [types/index.ts:158](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > `optional` **maxQueueSize?**: `number`
 
-Defined in: [types/index.ts:159](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L159)
+Defined in: [types/index.ts:171](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L171)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [types/index.ts:159](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > `optional` **maxAttempts?**: `number`
 
-Defined in: [types/index.ts:160](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L160)
+Defined in: [types/index.ts:172](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L172)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [types/index.ts:160](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > `optional` **retryDelayMs?**: `number`
 
-Defined in: [types/index.ts:161](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L161)
+Defined in: [types/index.ts:173](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L173)
 
 ***
 
@@ -46,7 +46,7 @@ Defined in: [types/index.ts:161](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > `optional` **classifyError?**: [`RetryClassifier`](../type-aliases/RetryClassifier.md)
 
-Defined in: [types/index.ts:162](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L162)
+Defined in: [types/index.ts:174](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L174)
 
 ***
 
@@ -54,7 +54,7 @@ Defined in: [types/index.ts:162](https://github.com/StellarAgent-AI-Agent-Paymen
 
 > `optional` **minChannels?**: `number`
 
-Defined in: [types/index.ts:164](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L164)
+Defined in: [types/index.ts:176](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L176)
 
 Eager sponsored channel count when `sponsorService` creates the pool.
 
@@ -70,7 +70,7 @@ Eager sponsored channel count when `sponsorService` creates the pool.
 
 > `optional` **maxChannels?**: `number`
 
-Defined in: [types/index.ts:166](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L166)
+Defined in: [types/index.ts:178](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L178)
 
 Demand-driven sponsored channel limit.
 

@@ -264,3 +264,13 @@ An existing queue, useful when several agents share one fleet-wide bound.
 Defined in: [types/index.ts:132](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L132)
 
 Build a queue owned by this agent. Omitted fields use fleet-safe defaults.
+
+***
+
+### routing?
+
+> `optional` **routing?**: [`RoutePlannerOptions`](RoutePlannerOptions.md)
+
+Defined in: [types/index.ts:134](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/packages/core/src/types/index.ts#L134)
+
+Multi-venue discovery and deterministic route-selection configuration.

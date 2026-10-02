@@ -13,6 +13,7 @@ import {
   expectBool,
   expectString,
   expectBytes,
+  expectVec,
   expectOptional,
   expectEnumTag,
 } from '../decode.js';
@@ -120,6 +121,53 @@ export function decodeChannel(value: unknown): RawChannel {
     token: expectString(v.token, 'Channel.token'),
     total_spent: expectBigInt(v.total_spent, 'Channel.total_spent'),
     voucher_signer: expectOptional(v.voucher_signer, (value) => expectBytes(value, 'Channel.voucher_signer')),
+  };
+}
+
+// ─── SolvencyVerifyingKey ──────────────────────────────────────────────────────
+
+/**
+ * A Groth16 verifying key for the solvency circuit (see
+ * `zk/solvency_proof`), encoded as native BLS12-381 points so it can be
+ * checked on-chain via `env.crypto().bls12_381().pairing_check`.
+ * `gamma_abc_g1` must have exactly 3 entries: the constant term followed
+ * by one entry per public input (`limit_per_period`, `total_spent`, in
+ * that order), per the circuit's declared public inputs.
+ */
+export interface RawSolvencyVerifyingKey {
+  alpha_g1: Uint8Array;
+  beta_g2: Uint8Array;
+  delta_g2: Uint8Array;
+  gamma_abc_g1: Uint8Array[];
+  gamma_g2: Uint8Array;
+}
+
+export function decodeSolvencyVerifyingKey(value: unknown): RawSolvencyVerifyingKey {
+  const v = expectRecord(value, 'SolvencyVerifyingKey');
+  return {
+    alpha_g1: expectBytes(v.alpha_g1, 'SolvencyVerifyingKey.alpha_g1'),
+    beta_g2: expectBytes(v.beta_g2, 'SolvencyVerifyingKey.beta_g2'),
+    delta_g2: expectBytes(v.delta_g2, 'SolvencyVerifyingKey.delta_g2'),
+    gamma_abc_g1: expectVec(v.gamma_abc_g1, (item) => expectBytes(item, 'SolvencyVerifyingKey.gamma_abc_g1'), 'SolvencyVerifyingKey.gamma_abc_g1'),
+    gamma_g2: expectBytes(v.gamma_g2, 'SolvencyVerifyingKey.gamma_g2'),
+  };
+}
+
+// ─── SolvencyProof ─────────────────────────────────────────────────────────────
+
+/** A Groth16 proof for the solvency circuit. */
+export interface RawSolvencyProof {
+  a: Uint8Array;
+  b: Uint8Array;
+  c: Uint8Array;
+}
+
+export function decodeSolvencyProof(value: unknown): RawSolvencyProof {
+  const v = expectRecord(value, 'SolvencyProof');
+  return {
+    a: expectBytes(v.a, 'SolvencyProof.a'),
+    b: expectBytes(v.b, 'SolvencyProof.b'),
+    c: expectBytes(v.c, 'SolvencyProof.c'),
   };
 }
 

@@ -1,8 +1,8 @@
 # @stellaragent/react
 
 React hooks for `@stellaragent/core` — `StellarAgentProvider`,
-`useChannel`, `useJob`, `usePayForAPI`, `useRateLimitStatus`, and
-`useSpendReport`. See [`example/`](example/) for a working app.
+`useAgent`, `useChannel`, `useJob`, `usePayForAPI`, `useRateLimitStatus`,
+and `useSpendReport`. See [`example/`](example/) for a working app.
 
 - **API reference** (generated from this package's TSDoc comments):
   [`docs/api/react`](../../docs/api/react/README.md)

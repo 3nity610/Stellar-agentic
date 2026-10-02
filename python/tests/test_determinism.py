@@ -24,8 +24,10 @@ import pytest
 
 from stellaragent import bid as bid_mod
 from stellaragent import fixed_point as fp
+from stellaragent import routing as routing_mod
 from stellaragent.bid import AgentBid, BidWeights
 from stellaragent.fixed_point import FixedPointError, _format, _quantize
+from stellaragent.routing import RoutingPolicy
 
 # ─── Fixture loading ─────────────────────────────────────────────────────────
 
@@ -51,6 +53,7 @@ def test_fixture_file_is_populated() -> None:
     assert len(FIXTURES["bid"]["scoreBid"]) > 100
     assert len(FIXTURES["bid"]["rankBids"]) > 10
     assert len(FIXTURES["bid"]["spendLimit"]) > 10
+    assert len(FIXTURES["routing"]["rankRoutes"]) > 10
 
 
 # ─── Dispatch ────────────────────────────────────────────────────────────────
@@ -258,3 +261,51 @@ def test_invalid_weights_rejected(case: dict) -> None:
     )
     with pytest.raises(FixedPointError, match="weights must sum to 1.0"):
         bid_mod.score_bid(sample, "10", "10", weights)
+
+
+# ─── deterministic routing parity ───────────────────────────────────────────
+
+
+def _routing_policy(name: str) -> RoutingPolicy:
+    raw = FIXTURES["routing"]["policies"][name]
+    return RoutingPolicy(
+        cost_weight=raw["costWeight"],
+        slippage_weight=raw["slippageWeight"],
+        reliability_weight=raw["reliabilityWeight"],
+        hop_penalty=raw["hopPenalty"],
+        max_slippage_bps=raw["maxSlippageBps"],
+        min_reliability_bps=raw["minReliabilityBps"],
+    )
+
+
+@pytest.mark.parametrize(
+    "case", FIXTURES["routing"]["rankRoutes"], ids=lambda c: c["id"]
+)
+def test_route_ranking_matches_typescript(case: dict) -> None:
+    ranked = routing_mod.rank_routes(case["routes"], _routing_policy(case["policy"]))
+    actual = [
+        {
+            "id": entry.id,
+            "score": entry.score,
+            "breakdown": {
+                "weightedCost": entry.breakdown.weighted_cost,
+                "weightedSlippage": entry.breakdown.weighted_slippage,
+                "weightedReliability": entry.breakdown.weighted_reliability,
+                "hopPenalty": entry.breakdown.hop_penalty,
+            },
+        }
+        for entry in ranked
+    ]
+    assert actual == case["expect"]
+
+
+@pytest.mark.parametrize(
+    "case", FIXTURES["routing"]["rankRoutes"], ids=lambda c: c["id"]
+)
+def test_route_ranking_is_order_independent(case: dict) -> None:
+    policy = _routing_policy(case["policy"])
+    forward = routing_mod.rank_routes(case["routes"], policy)
+    reverse = routing_mod.rank_routes(list(reversed(case["routes"])), policy)
+    assert [(entry.id, entry.score) for entry in forward] == [
+        (entry.id, entry.score) for entry in reverse
+    ]

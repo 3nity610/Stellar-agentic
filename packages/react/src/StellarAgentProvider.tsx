@@ -132,6 +132,7 @@ export function StellarAgentProvider({
   const configKey = useMemo(() => JSON.stringify(config), [config]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return; // SSR: keep the server render inert.
     if (injectedAgent) {
       setState({ agent: injectedAgent, status: 'ready', error: null });
       return;

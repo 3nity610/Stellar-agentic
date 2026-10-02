@@ -33,6 +33,9 @@ import BigNumber from 'bignumber.js';
 import * as fp from '../packages/core/src/math/fixed-point.js';
 import * as bid from '../packages/core/src/math/bid.js';
 import type { AgentBid, BidWeights } from '../packages/core/src/math/bid.js';
+import * as routing from '../packages/core/src/math/routing.js';
+import type { RoutingPolicy } from '../packages/core/src/math/routing.js';
+import type { RouteQuote } from '../packages/core/src/routing/types.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_PATH = resolve(REPO_ROOT, 'fixtures/determinism.json');
@@ -367,6 +370,90 @@ const invalidWeightCases = [
   { id: 'all-zero', weights: { price: '0', reputation: '0', latency: '0', reliability: '0' } },
 ];
 
+// ─── Routing fixtures ───────────────────────────────────────────────────────
+
+const ROUTING_POLICIES: Record<string, RoutingPolicy> = {
+  default: { ...routing.DEFAULT_ROUTING_POLICY },
+  costOnly: {
+    ...routing.DEFAULT_ROUTING_POLICY,
+    costWeight: 10_000,
+    slippageWeight: 0,
+    reliabilityWeight: 0,
+    hopPenalty: 0,
+  },
+  reliabilityHeavy: {
+    ...routing.DEFAULT_ROUTING_POLICY,
+    costWeight: 1_000,
+    slippageWeight: 1_000,
+    reliabilityWeight: 8_000,
+    hopPenalty: 11,
+  },
+};
+
+function routeFixture(id: string, overrides: Partial<RouteQuote> = {}): RouteQuote {
+  return {
+    id,
+    sourceAsset: 'XLM',
+    destinationAsset: 'USDC',
+    sourceAmount: '100000000',
+    expectedDestinationAmount: '20000000',
+    totalFeeBps: 30,
+    expectedSlippageBps: 20,
+    reliabilityBps: 9_500,
+    hopCount: 1,
+    hops: [],
+    ...overrides,
+  };
+}
+
+const ROUTE_POOLS: Record<string, RouteQuote[]> = {
+  empty: [],
+  obvious: [
+    routeFixture('expensive', { totalFeeBps: 500 }),
+    routeFixture('cheap', { totalFeeBps: 1 }),
+    routeFixture('reliable', { totalFeeBps: 50, reliabilityBps: 10_000 }),
+  ],
+  allTies: ['z-route', 'A-route', 'a-route', 'M-route'].map((id) => routeFixture(id)),
+  unicodeTies: ['\u{10000}-route', '\uE000-route'].map((id) => routeFixture(id)),
+  prefixTies: ['route/long', 'route'].map((id) => routeFixture(id)),
+  tieBreaks: [
+    routeFixture('low-output', { expectedDestinationAmount: '19999999' }),
+    routeFixture('high-output', { expectedDestinationAmount: '20000001' }),
+    routeFixture('slippery', { expectedSlippageBps: 21 }),
+    routeFixture('two-hop', { hopCount: 2 }),
+  ],
+  filtered: [
+    routeFixture('valid'),
+    routeFixture('too-slippery', { expectedSlippageBps: 1_001 }),
+    routeFixture('too-unreliable', { reliabilityBps: 4_999 }),
+  ],
+  rounding: [
+    routeFixture('one', { totalFeeBps: 1, expectedSlippageBps: 1, reliabilityBps: 9_999 }),
+    routeFixture('two', { totalFeeBps: 2, expectedSlippageBps: 2, reliabilityBps: 9_998 }),
+  ],
+  huge: [
+    routeFixture('max', {
+      expectedDestinationAmount: '170141183460469231731687303715884105727',
+    }),
+    routeFixture('max-minus-one', {
+      expectedDestinationAmount: '170141183460469231731687303715884105726',
+    }),
+  ],
+};
+
+const routingCases = Object.entries(ROUTE_POOLS).flatMap(([poolName, routes]) =>
+  Object.entries(ROUTING_POLICIES).map(([policyName, policy]) => ({
+    id: `${poolName}/${policyName}`,
+    routes,
+    policy: policyName,
+    expect: routing.rankRoutes(routes, policy).map((entry) => ({
+      id: entry.id,
+      score: entry.score,
+      breakdown: entry.breakdown,
+    })),
+  })),
+);
+
 // ─── Emit ────────────────────────────────────────────────────────────────────
 
 const fixtures = {
@@ -384,6 +471,10 @@ const fixtures = {
     rankBids: rankCases,
     spendLimit: spendCases,
     invalidWeights: invalidWeightCases,
+  },
+  routing: {
+    policies: ROUTING_POLICIES,
+    rankRoutes: routingCases,
   },
 };
 
@@ -417,5 +508,6 @@ if (process.argv.includes('--check')) {
   console.log(`  rankBids cases    : ${rankCases.length}`);
   console.log(`  spend-limit cases : ${spendCases.length}`);
   console.log(`  invalid weights   : ${invalidWeightCases.length}`);
-  console.log(`  total             : ${total}`);
+  console.log(`  routing cases     : ${routingCases.length}`);
+  console.log(`  total             : ${total + routingCases.length}`);
 }
