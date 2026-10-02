@@ -3,11 +3,23 @@
 import { readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import {
+  RATE_LIMIT_LEDGERS_PER_DAY,
+  RATE_LIMIT_LEDGERS_PER_HOUR,
+  StellarAgent,
+  estimateSecondsRemaining,
   fromStroops,
+  isWindowExpired,
+  ledgersRemainingInWindow,
   rankRoutes,
+  toStroops,
+  type LedgerCloseEstimate,
+  type Network,
   type PaymentQuote,
+  type RateLimitConfig,
+  type RateLimitStatus,
   type RouteHop,
   type RouteQuote,
+  type TxResult,
 } from '@stellaragent/core';
 import { getConfigPath, readConfigFile, writeConfigFile } from './config.js';
 import { handlePayCommand } from './pay.js';
@@ -42,13 +54,34 @@ export interface CliIO {
   stderr(message: string): void;
 }
 
+export interface LimitsClient {
+  readonly address: string;
+  setRateLimits(config: RateLimitConfig): Promise<TxResult>;
+  getRateLimitStatus(agentAddress?: string): Promise<RateLimitStatus>;
+  getLedgerCloseEstimate(): Promise<LedgerCloseEstimate>;
+}
+
+export interface CliDependencies {
+  createLimitsClient(args: readonly string[]): Promise<LimitsClient>;
+}
+
 const terminalIO: CliIO = {
   stdout: (message) => process.stdout.write(`${message}\n`),
   stderr: (message) => process.stderr.write(`${message}\n`),
 };
 
+const defaultDependencies: CliDependencies = {
+  createLimitsClient: createLimitsClientFromEnvironment,
+};
+
+class CliUsageError extends Error {}
+
 /** Execute the CLI without terminating the host process. */
-export async function runCli(args: readonly string[], io: CliIO = terminalIO): Promise<number> {
+export async function runCli(
+  args: readonly string[],
+  io: CliIO = terminalIO,
+  dependencies: CliDependencies = defaultDependencies,
+): Promise<number> {
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     io.stdout(HELP);
     return 0;
@@ -182,6 +215,114 @@ export function formatJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+async function runLimitsCommand(
+  args: readonly string[],
+  io: CliIO,
+  dependencies: CliDependencies,
+): Promise<number> {
+  const action = args[1] as 'set' | 'show';
+
+  try {
+    const config = action === 'set' ? parseRateLimitConfig(args) : undefined;
+    const client = await dependencies.createLimitsClient(args);
+
+    if (action === 'set') {
+      const result = await client.setRateLimits(config!);
+      io.stdout(formatLimitsSetReceipt(client.address, config!, result));
+      return result.success ? 0 : 1;
+    }
+
+    const target = optionalOption(args, '--agent') ?? client.address;
+    const status = await client.getRateLimitStatus(target);
+    if (!status.configured) {
+      io.stdout(
+        `No rate limits configured for ${target}. ` +
+        'Payments are unrestricted by the rate limiter.',
+      );
+      return 0;
+    }
+
+    const ledgerEstimate = await client.getLedgerCloseEstimate();
+    io.stdout(formatLimitsStatus(target, status, ledgerEstimate));
+    return 0;
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      io.stderr(error.message);
+      return 2;
+    }
+    io.stderr(`Limits ${action} failed: ${errorMessage(error)}`);
+    return 1;
+  }
+}
+
+/** Format the transaction receipt emitted after limits are configured. */
+export function formatLimitsSetReceipt(
+  address: string,
+  config: RateLimitConfig,
+  result: TxResult,
+): string {
+  return [
+    `Rate limits configured for ${address}`,
+    `Per transaction:       ${config.maxPerTx}`,
+    `Hourly amount:         ${config.maxPerHour}`,
+    `Daily amount:          ${config.maxPerDay}`,
+    `Hourly transactions:   ${config.maxTxsPerHour}`,
+    `Transaction:           ${result.hash}`,
+    `Confirmed ledger:      ${result.ledger ?? 'pending confirmation metadata'}`,
+  ].join('\n');
+}
+
+/** Format configured limits with effective headroom and ledger-time resets. */
+export function formatLimitsStatus(
+  address: string,
+  status: RateLimitStatus,
+  ledgerEstimate: LedgerCloseEstimate,
+): string {
+  if (!status.configured) {
+    return (
+      `No rate limits configured for ${address}. ` +
+      'Payments are unrestricted by the rate limiter.'
+    );
+  }
+
+  const hourExpired = isWindowExpired(
+    status.hourWindowStartLedger,
+    RATE_LIMIT_LEDGERS_PER_HOUR,
+    ledgerEstimate.currentLedger,
+  );
+  const dayExpired = isWindowExpired(
+    status.dayWindowStartLedger,
+    RATE_LIMIT_LEDGERS_PER_DAY,
+    ledgerEstimate.currentLedger,
+  );
+  const hourlySpend = hourExpired ? '0' : status.spentThisHour;
+  const dailySpend = dayExpired ? '0' : status.spentToday;
+  const hourlyTransactions = hourExpired ? 0 : status.txsThisHour;
+
+  return [
+    `Rate limits for ${address}`,
+    `State:                 ${status.active ? 'active' : 'inactive (agent killed)'}`,
+    `Current ledger:        ${ledgerEstimate.currentLedger}`,
+    `Per transaction:       ${status.maxPerTx} available`,
+    `Hourly amount:         ${remainingAmount(status.maxPerHour, hourlySpend)} remaining ` +
+      `of ${status.maxPerHour} (${hourlySpend} spent)`,
+    `Hourly transactions:   ${Math.max(0, status.maxTxsPerHour - hourlyTransactions)} remaining ` +
+      `of ${status.maxTxsPerHour} (${hourlyTransactions} used)`,
+    `Hourly reset:          ${formatWindowReset(
+      status.hourWindowStartLedger,
+      RATE_LIMIT_LEDGERS_PER_HOUR,
+      ledgerEstimate,
+    )}`,
+    `Daily amount:          ${remainingAmount(status.maxPerDay, dailySpend)} remaining ` +
+      `of ${status.maxPerDay} (${dailySpend} spent)`,
+    `Daily reset:           ${formatWindowReset(
+      status.dayWindowStartLedger,
+      RATE_LIMIT_LEDGERS_PER_DAY,
+      ledgerEstimate,
+    )}`,
+  ].join('\n');
+}
+
 /** Human-readable preview shared by the command and tests. */
 export function formatQuotePreview(quote: PaymentQuote): string {
   const route = quote.route;
@@ -263,9 +404,128 @@ function parseFailures(value: unknown): PaymentQuote['failures'] {
   });
 }
 
+function parseRateLimitConfig(args: readonly string[]): RateLimitConfig {
+  return {
+    maxPerTx: positiveAmountOption(args, '--max-per-tx'),
+    maxPerHour: positiveAmountOption(args, '--max-per-hour'),
+    maxPerDay: positiveAmountOption(args, '--max-per-day'),
+    maxTxsPerHour: positiveU32Option(args, '--max-txs-per-hour'),
+  };
+}
+
+function positiveAmountOption(args: readonly string[], option: string): string {
+  const value = requiredOption(args, option);
+  if (!/^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,7})?$/.test(value) || toStroops(value) <= 0n) {
+    throw new CliUsageError(
+      `${option} must be a positive decimal amount with at most 7 fractional digits`,
+    );
+  }
+  return value;
+}
+
+function positiveU32Option(args: readonly string[], option: string): number {
+  const value = requiredOption(args, option);
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    throw new CliUsageError(`${option} must be a positive integer`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed > 0xffff_ffff) {
+    throw new CliUsageError(`${option} must fit in an unsigned 32-bit integer`);
+  }
+  return parsed;
+}
+
+async function createLimitsClientFromEnvironment(args: readonly string[]): Promise<LimitsClient> {
+  const network = parseNetwork(
+    optionalOption(args, '--network') ?? process.env.STELLARAGENT_NETWORK ?? 'testnet',
+  );
+  const secretKey = process.env.STELLARAGENT_SECRET_KEY;
+  if (!secretKey) {
+    throw new CliUsageError(
+      'STELLARAGENT_SECRET_KEY is required for limits commands; ' +
+      'the key is intentionally not accepted as a command-line option',
+    );
+  }
+  return StellarAgent.create({ network, secretKey });
+}
+
+function parseNetwork(value: string): Network {
+  if (value === 'mainnet' || value === 'testnet' || value === 'local') {
+    return value;
+  }
+  throw new CliUsageError('--network must be one of: mainnet, testnet, local');
+}
+
+function requiredOption(args: readonly string[], option: string): string {
+  const value = optionalOption(args, option);
+  if (value === undefined) {
+    throw new CliUsageError(`Missing required option: ${option} <value>`);
+  }
+  return value;
+}
+
+function optionalOption(args: readonly string[], option: string): string | undefined {
+  const index = args.indexOf(option);
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  if (!value || value.startsWith('--')) {
+    throw new CliUsageError(`Missing value for option: ${option}`);
+  }
+  return value;
+}
+
 function optionValue(args: readonly string[], option: string): string | undefined {
   const index = args.indexOf(option);
   return index >= 0 ? args[index + 1] : undefined;
+}
+
+function remainingAmount(limit: string, spent: string): string {
+  const remaining = toStroops(limit) - toStroops(spent);
+  return fromStroops(remaining > 0n ? remaining : 0n);
+}
+
+function formatWindowReset(
+  windowStartLedger: number,
+  ledgersPerWindow: number,
+  estimate: LedgerCloseEstimate,
+): string {
+  const resetLedger = windowStartLedger + ledgersPerWindow;
+  const ledgersRemaining = ledgersRemainingInWindow(
+    windowStartLedger,
+    ledgersPerWindow,
+    estimate.currentLedger,
+  );
+
+  if (ledgersRemaining === 0) {
+    return `window expired at ledger ${resetLedger}; resets on the next rate-limit check`;
+  }
+
+  const secondsRemaining = estimateSecondsRemaining(
+    ledgersRemaining,
+    estimate.avgLedgerCloseSeconds,
+  );
+  return (
+    `ledger ${resetLedger} in ~${formatDuration(secondsRemaining)} ` +
+    `(${estimate.observed ? 'observed' : 'fallback'} ` +
+    `${estimate.avgLedgerCloseSeconds.toFixed(2)}s/ledger)`
+  );
+}
+
+function formatDuration(seconds: number): string {
+  let remaining = Math.max(0, Math.ceil(seconds));
+  const days = Math.floor(remaining / 86_400);
+  remaining %= 86_400;
+  const hours = Math.floor(remaining / 3_600);
+  remaining %= 3_600;
+  const minutes = Math.floor(remaining / 60);
+  remaining %= 60;
+
+  const parts: string[] = [];
+  if (days) parts.push(`${days}d`);
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  if (remaining || parts.length === 0) parts.push(`${remaining}s`);
+  return parts.slice(0, 2).join(' ');
 }
 
 function requiredInteger(value: unknown, name: string): string {
