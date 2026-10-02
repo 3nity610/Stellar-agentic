@@ -1,51 +1,18 @@
-export interface Agent {
-  id: string;
-  name: string;
-  address: string;
-  status: 'active' | 'inactive' | 'warning';
-  balance: string;
-  asset: string;
-  spentToday: string;
-  spentThisHour: string;
-  limitPerHour: string;
-  limitPerDay: string;
-  totalOps: number;
-  lastActive: string;
-  channelId: string;
-}
+/**
+ * Deterministic fixtures for mock mode.
+ *
+ * Nothing in `src/pages/` imports this directly any more — every panel goes
+ * through `lib/chain/`, which serves these rows in mock mode and real chain
+ * state otherwise. That indirection is the whole point: a page that renders
+ * `MOCK_AGENTS` cannot be told apart from a page that renders live data, so it
+ * is never actually tested against live data.
+ *
+ * The types live in `lib/chain/types.ts` (they describe panels, not fixtures)
+ * and are re-exported here so existing imports keep resolving.
+ */
+import type { Agent, Job, Payment, SpendDataPoint } from './chain/types.js';
 
-export interface Payment {
-  id: string;
-  agentId: string;
-  agentName: string;
-  recipient: string;
-  amount: string;
-  asset: string;
-  endpoint: string;
-  ledger: number;
-  timestamp: string;
-  status: 'success' | 'failed' | 'pending';
-}
-
-export interface Job {
-  id: string;
-  requester: string;
-  requesterName: string;
-  worker: string | null;
-  workerName: string | null;
-  task: string;
-  amount: string;
-  asset: string;
-  status: 'open' | 'in_progress' | 'pending_release' | 'completed' | 'refunded' | 'disputed';
-  deadline: string;
-  createdAt: string;
-}
-
-export interface SpendDataPoint {
-  time: string;
-  spend: number;
-  ops: number;
-}
+export type { Agent, Job, Payment, SpendDataPoint } from './chain/types.js';
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
 

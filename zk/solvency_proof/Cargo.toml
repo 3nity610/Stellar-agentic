@@ -13,13 +13,13 @@ name = "solvency-prover"
 path = "src/bin/prover.rs"
 
 [dependencies]
-ark-ff = "0.5"
+ark-ff = "0.6"
 ark-ec = "0.5"
 ark-bls12-381 = "0.5"
 ark-groth16 = "0.5"
 ark-relations = "0.5"
 ark-r1cs-std = "0.5"
-ark-snark = "0.5"
+ark-snark = "0.6"
 ark-serialize = "0.5"
 ark-std = { version = "0.5", features = ["std", "getrandom"] }
 serde = { version = "1", features = ["derive"] }
@@ -27,5 +27,10 @@ serde_json = "1"
 hex = "0.4"
 
 [dev-dependencies]
-soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+soroban-sdk = { version = "28.0.0", features = ["testutils"] }
 payment_channel = { path = "../../contracts/payment_channel" }
+criterion = "0.5"
+
+[[bench]]
+name = "proving_bench"
+harness = false

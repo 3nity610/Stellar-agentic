@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import {
   RATE_LIMIT_LEDGERS_PER_DAY,
   RATE_LIMIT_LEDGERS_PER_HOUR,
@@ -20,35 +21,33 @@ import {
   type RouteQuote,
   type TxResult,
 } from '@stellaragent/core';
+import { getConfigPath, readConfigFile, writeConfigFile } from './config.js';
+import { handlePayCommand } from './pay.js';
+import { handleChannelCommand } from './channel.js';
+import { handleLimitsCommand } from './limits.js';
 
 const HELP = `StellarAgent CLI
 
 Usage:
-  stellaragent route preview --quote <quote.json> [--confirm]
-  stellaragent limits set --max-per-tx <amount> --max-per-hour <amount> \\
-    --max-per-day <amount> --max-txs-per-hour <count> [--network <network>]
-  stellaragent limits show [--agent <address>] [--network <network>]
+  stellaragent <command> [options]
 
 Commands:
-  route preview   Validate and display a routed-payment quote before confirmation
-  limits set      Configure on-chain transaction, hourly, and daily limits
-  limits show     Show configured limits, remaining headroom, and reset timing
+  deploy               Build, deploy and cross-wire the contract set
+  route preview       Validate and display a routed-payment quote before confirmation
+  config path         Print the configuration file path
+  config get <key>    Get configuration value
+  config set <k> <v>  Set configuration value
+  pay                 Send payment with pre-flight outcome prediction
+  channel             Manage payment channels (open, top-up, status, close)
+  limits set          Configure rate limits (per hour / per day)
+  limits show         Show remaining rate-limit headroom and window resets
 
 Options:
-  --quote <file>             PaymentQuote JSON produced by @stellaragent/core
-  --confirm                  Confirm the displayed route (preview-only without this flag)
-  --max-per-tx <amount>      Maximum amount allowed for one transaction
-  --max-per-hour <amount>    Maximum amount allowed in the hourly ledger window
-  --max-per-day <amount>     Maximum amount allowed in the daily ledger window
-  --max-txs-per-hour <count> Maximum transactions allowed in the hourly ledger window
-  --agent <address>          Agent address to inspect (defaults to the signing address)
-  --network <network>        mainnet, testnet, or local (default: STELLARAGENT_NETWORK/testnet)
-  --help                     Show this help
-
-Environment:
-  STELLARAGENT_SECRET_KEY    Signing key used by limits commands
-  STELLARAGENT_NETWORK       Default network when --network is omitted
-  STELLARAGENT_* contracts   Contract addresses resolved by @stellaragent/core`;
+  --network <net>     Network to operate against
+  --json, -j          Emit machine-readable JSON on stdout
+  --help, -h          Show this help
+  --version, -v       Show version
+`;
 
 export interface CliIO {
   stdout(message: string): void;
@@ -88,12 +87,122 @@ export async function runCli(
     return 0;
   }
 
-  if (args[0] === 'route' && args[1] === 'preview') {
-    return runRoutePreview(args, io);
+  if (args.includes('--version') || args.includes('-v')) {
+    io.stdout('0.1.0');
+    return 0;
   }
 
-  if (args[0] === 'limits' && (args[1] === 'set' || args[1] === 'show')) {
-    return runLimitsCommand(args, io, dependencies);
+  const command = args[0];
+
+  // Route preview command
+  if (command === 'route' && args[1] === 'preview') {
+    const quotePath = optionValue(args, '--quote');
+    if (!quotePath) {
+      io.stderr('Missing required option: --quote <quote.json>');
+      return 2;
+    }
+
+    try {
+      const quote = parsePaymentQuote(JSON.parse(await readFile(quotePath, 'utf8')));
+      io.stdout(formatQuotePreview(quote));
+      if (args.includes('--confirm')) {
+        io.stdout(`Confirmed route ${quote.route.id}. Pass this unchanged quote to payForAPI().`);
+      } else {
+        io.stdout('Preview only. Re-run with --confirm after reviewing the route and cost.');
+      }
+      return 0;
+    } catch (error) {
+      io.stderr(`Route preview failed: ${errorMessage(error)}`);
+      return 1;
+  }
+
+  if (command === 'limits') {
+    const action = args[1];
+    if (action !== 'set' && action !== 'show') {
+      io.stderr('Unknown limits action. Available: set, show');
+      return 2;
+    }
+    return handleLimitsCommand({ action, args }, io);
+  }
+
+
+  // Config commands
+  if (command === 'config') {
+    const sub = args[1];
+    if (sub === 'path') {
+      io.stdout(args.includes('--json') ? formatJson({ path: getConfigPath() }) : getConfigPath());
+      return 0;
+    }
+    if (sub === 'get') {
+      const key = args[2];
+      if (!key) {
+        io.stderr('Usage: stellaragent config get <key>');
+        return 2;
+      }
+      const cfg = await readConfigFile();
+      const val = (cfg as Record<string, unknown>)[key];
+      io.stdout(args.includes('--json') ? formatJson({ [key]: val ?? null }) : (typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val ?? '')));
+      return 0;
+    }
+    if (sub === 'set') {
+      const key = args[2];
+      const val = args[3];
+      if (!key || val === undefined) {
+        io.stderr('Usage: stellaragent config set <key> <value>');
+        return 2;
+      }
+      const cfg = await readConfigFile();
+      (cfg as Record<string, unknown>)[key] = val;
+      await writeConfigFile(cfg);
+      io.stdout(`Set ${key}=${val}`);
+      return 0;
+    }
+    io.stderr('Unknown config command. Available: path, get, set');
+    return 2;
+  }
+
+  // Pay command
+  if (command === 'pay') {
+    return handlePayCommand(
+      {
+        to: optionValue(args, '--to'),
+        amount: optionValue(args, '--amount'),
+        asset: optionValue(args, '--asset'),
+        endpoint: optionValue(args, '--endpoint'),
+        yes: args.includes('--yes') || args.includes('-y'),
+        network: optionValue(args, '--network'),
+      },
+      io
+    );
+  }
+
+  // Channel command
+  if (command === 'channel') {
+    const action = args[1] as 'open' | 'top-up' | 'status' | 'close';
+    if (!action || !['open', 'top-up', 'status', 'close'].includes(action)) {
+      io.stderr('Unknown channel action. Available: open, top-up, status, close');
+      return 2;
+    }
+    return handleChannelCommand(
+      {
+        action,
+        channelId: optionValue(args, '--channel-id') ?? optionValue(args, '--id'),
+        amount: optionValue(args, '--amount'),
+        recipient: optionValue(args, '--recipient') ?? optionValue(args, '--to'),
+        json: args.includes('--json'),
+        yes: args.includes('--yes') || args.includes('-y'),
+        network: optionValue(args, '--network'),
+      },
+      io
+    );
+  }
+
+  // Deploy command — wraps the repo deployment script
+  if (command === 'deploy') {
+    const rest = args.slice(1);
+    if (rest.includes('--dry-run')) io.stdout('deploy: dry run, no contracts will be sent');
+    execFileSync('pnpm', ['exec', 'tsx', 'scripts/deploy.ts', ...rest], { stdio: 'inherit' });
+    return 0;
   }
 
   io.stderr(`Unknown command: ${args.join(' ')}`);
@@ -101,26 +210,9 @@ export async function runCli(
   return 2;
 }
 
-async function runRoutePreview(args: readonly string[], io: CliIO): Promise<number> {
-  const quotePath = optionValue(args, '--quote');
-  if (!quotePath) {
-    io.stderr('Missing required option: --quote <quote.json>');
-    return 2;
-  }
-
-  try {
-    const quote = parsePaymentQuote(JSON.parse(await readFile(quotePath, 'utf8')));
-    io.stdout(formatQuotePreview(quote));
-    if (args.includes('--confirm')) {
-      io.stdout(`Confirmed route ${quote.route.id}. Pass this unchanged quote to payForAPI().`);
-    } else {
-      io.stdout('Preview only. Re-run with --confirm after reviewing the route and cost.');
-    }
-    return 0;
-  } catch (error) {
-    io.stderr(`Route preview failed: ${errorMessage(error)}`);
-    return 1;
-  }
+/** Serialize any value for `--json` output. */
+export function formatJson(value: unknown): string {
+  return JSON.stringify(value, null, 2);
 }
 
 async function runLimitsCommand(
@@ -285,8 +377,6 @@ function parsePaymentQuote(value: unknown): PaymentQuote {
     throw new RangeError('validUntilLedger precedes quotedAtLedger');
   }
 
-  // Reusing the production selector both recomputes the canonical score and
-  // rejects malformed or out-of-policy routes before a caller confirms them.
   const route = rankRoutes([value.route as unknown as RouteQuote])[0];
   if (!route) throw new RangeError('route is outside routing policy bounds');
   if (BigInt(minimum) > BigInt(route.expectedDestinationAmount)) {

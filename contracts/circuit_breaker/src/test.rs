@@ -66,22 +66,33 @@ fn quorum_not_reached_does_not_pause() {
 }
 
 #[test]
-fn duplicate_proposals_from_same_node_only_count_once() {
+#[should_panic(expected = "proposal cooldown active")]
+fn repeated_proposals_inside_cooldown_are_rejected() {
     let env = Env::default();
     env.mock_all_auths();
     let (client, _admin, nodes) = setup(&env, 5);
 
     let first = nodes.get(0).unwrap();
-    // Same node proposes repeatedly instead of 5 distinct nodes.
-    for _ in 0..10 {
-        client.propose_pause(&first);
-    }
-    for node in nodes.iter().skip(1).take(3) {
-        client.propose_pause(&node);
-    }
+    client.propose_pause(&first);
+    // Repeated proposal within cooldown fails
+    client.propose_pause(&first);
+}
 
-    // Only 4 distinct nodes total — quorum still not reached.
-    assert_eq!(client.pause_quorum_count(), 4);
+#[test]
+fn proposal_after_cooldown_is_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _admin, nodes) = setup(&env, 5);
+
+    let first = nodes.get(0).unwrap();
+    env.ledger().set_sequence_number(1_000);
+    client.propose_pause(&first);
+    assert_eq!(client.pause_quorum_count(), 1);
+
+    // Advance ledger past the cooldown window
+    env.ledger().set_sequence_number(1_000 + WINDOW);
+    client.propose_pause(&first);
+    assert_eq!(client.pause_quorum_count(), 1);
 }
 
 #[test]

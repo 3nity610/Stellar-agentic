@@ -19,7 +19,7 @@ import {
 import { clsx } from 'clsx';
 import { useAlertStore } from '../lib/useAlertStore';
 import type { FiredAlert, AlertThresholds } from '../lib/alertHeuristics';
-import { MOCK_AGENTS } from '../lib/mockData';
+import { useAgentsPanel } from '../lib/chain/panels.js';
 
 // ─── Severity colours ─────────────────────────────────────────────────────────
 const severityStyles = {
@@ -210,6 +210,11 @@ function WebhookPanel({
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export function AlertsPage() {
+  // Alerts are derived from the agents panel, so they describe the agents the
+  // dashboard is actually watching rather than a fixed fixture list.
+  const agentsPanel = useAgentsPanel();
+  const agents = agentsPanel.data ?? [];
+
   const {
     alerts,
     thresholds,
@@ -220,7 +225,7 @@ export function AlertsPage() {
     injectRateLimitHit,
     injectAgentKilled,
     eventCount,
-  } = useAlertStore();
+  } = useAlertStore(agents);
 
   const [showSettings, setShowSettings] = useState(false);
   const [showWebhook, setShowWebhook] = useState(false);
@@ -368,7 +373,7 @@ export function AlertsPage() {
           <span className="text-[10px] text-sa-muted">(trigger alerts for testing)</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          {MOCK_AGENTS.slice(0, 3).map((agent) => (
+          {(agents ?? []).slice(0, 3).map((agent) => (
             <div key={agent.id} className="flex gap-1">
               <button
                 onClick={() => injectRateLimitHit(agent.id, agent.name)}

@@ -1,0 +1,62 @@
+{
+  // Build the image from the Dockerfile next to this file rather than a
+  // published base: the toolchain here is the deliverable, and it has to stay
+  // pinned to what .github/workflows/ci.yml installs (Node 22, pnpm 9.15.9,
+  // Rust with wasm32v1-none, Python 3.11, stellar-cli 25.1.0).
+  "name": "StellarAgent",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  // The whole repo: contracts/ and services/ are Rust, python/ is Python, and
+  // the pnpm workspace spans packages/, integrations/ and dashboard/. A
+  // folder-scoped container would hide the Rust and Python trees from the
+  // editor, which is exactly what someone new is trying to learn.
+  "workspaceFolder": "..",
+
+  "features": {
+    // Git history (blame/annotate) and signed commits. `cli.extra-extensions`
+    // is what makes rust-analyzer's syntax highlighting work on the .rs files.
+    "ghcr.io/devcontainers/features/git:1": {
+      "extraExtensions": ["rust"]
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "ms-python.python",
+        "bradlc.vscode-tailwindcss",
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "files.insertFinalNewline": true,
+        "files.trimTrailingWhitespace": true,
+        // Rust nightly features need `rust-src`; without it rust-analyzer
+        // falls back to a parser that does not understand the contracts.
+        "rust-analyzer.check.command": "clippy",
+        "[rust]": {
+          "editor.defaultFormatter": "rust-lang.rust-analyzer"
+        }
+      }
+    }
+  },
+
+  // The editor in this container has no `cargo` or `stellar` on PATH unless
+  // this is sourced, which turns every legitimate build into a
+  // "command not found" that looks like a broken repo.
+  "remoteEnv": {
+    "PATH": "/usr/local/cargo/bin:${containerEnv:PATH}"
+  },
+
+  "postCreateCommand": "bash scripts/setup.sh && bash scripts/devcontainer-postcreate.sh",
+
+  // The devcontainer is a fallback for people without the toolchain, not a
+  // requirement: CONTRIBUTING.md and scripts/setup.sh both work on a host that
+  // has the tools installed directly.
+  "remoteUser": "vscode"
+}

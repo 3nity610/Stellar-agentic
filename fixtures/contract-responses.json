@@ -1,0 +1,52 @@
+{
+  "get_agent": {
+    "active": true,
+    "address": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+    "created_at": 9,
+    "name": "worker",
+    "owner": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+    "total_ops": "3"
+  },
+  "get_channel": {
+    "active": true,
+    "agent": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+    "allocated": "0",
+    "collateral": "100",
+    "dispute_ledgers": 17280,
+    "limit_per_period": "50",
+    "owner": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+    "period": ["Hourly"],
+    "period_start_ledger": 700,
+    "spent_this_period": "10",
+    "token": "CABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAFNSZ",
+    "total_spent": "20",
+    "voucher_signer": null
+  },
+  "get_job": {
+    "amount": "25",
+    "arbiter": null,
+    "created_at": 8,
+    "deadline_ledger": 99,
+    "dispute_deadline_ledger": null,
+    "requester": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+    "result": "0x646f6e65",
+    "status": ["PendingRelease"],
+    "task_description": "0x7461736b",
+    "token": "CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3",
+    "worker": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57"
+  },
+  "get_limits": {
+    "active": true,
+    "agent": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57",
+    "daily_spend": "6000000",
+    "day_window_start": 100,
+    "hourly_spend": "5000000",
+    "hourly_tx_count": 2,
+    "hour_window_start": 700,
+    "max_per_day": "30000000",
+    "max_per_hour": "20000000",
+    "max_per_tx": "10000000",
+    "max_txs_per_hour": 4,
+    "owner": "GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57"
+  }
+}

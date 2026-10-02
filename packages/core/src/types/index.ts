@@ -255,6 +255,22 @@ export interface PayForAPIParams {
   slippageToleranceBps?: number;
 }
 
+export interface PredictPaymentParams {
+  /** Proposed payment amount, as a decimal string. */
+  amount: string;
+  /**
+   * Channel to evaluate against. Defaults to the agent's active channel if open.
+   * Pass `null` to explicitly skip channel evaluation even when an active channel exists.
+   */
+  channelId?: bigint | null;
+  /**
+   * Stellar address of the agent to check rate limits for.
+   * Defaults to this agent's address.
+   */
+  agentAddress?: string;
+}
+
+
 export interface ChannelInfo {
   id: bigint;
   agent: string;

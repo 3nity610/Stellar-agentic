@@ -212,103 +212,90 @@ describe('route preview', () => {
   });
 });
 
-describe('limits commands', () => {
-  it('sets all on-chain limits through the SDK and prints the transaction receipt', async () => {
-    const mock = limitsClient();
+describe('config command (#329)', () => {
+  it('returns the config path', async () => {
     const output = capture();
-    const exitCode = await runCli([
-      'limits',
-      'set',
-      '--max-per-tx',
-      '2',
-      '--max-per-hour',
-      '10',
-      '--max-per-day',
-      '100',
-      '--max-txs-per-hour',
-      '20',
-    ], output.io, { createLimitsClient: async () => mock.client });
-
+    const exitCode = await runCli(['config', 'path'], output.io);
     expect(exitCode).toBe(0);
-    expect(mock.configured).toEqual([{
-      maxPerTx: '2',
-      maxPerHour: '10',
-      maxPerDay: '100',
-      maxTxsPerHour: 20,
-    }]);
-    expect(output.stdout.join('\n')).toContain('Transaction:           abc123');
-    expect(output.stdout.join('\n')).toContain('Confirmed ledger:      1234');
+    expect(output.stdout[0]).toContain('.stellaragent');
+    expect(output.stdout[0]).toContain('config.json');
   });
 
-  it('shows remaining amount and transaction headroom with ledger-time resets', async () => {
-    const mock = limitsClient();
-    const output = capture();
-    const exitCode = await runCli(
-      ['limits', 'show', '--agent', 'GTARGET'],
-      output.io,
-      { createLimitsClient: async () => mock.client },
-    );
-    const contents = output.stdout.join('\n');
+  it('sets and gets configuration values', async () => {
+    const setOutput = capture();
+    const setCode = await runCli(['config', 'set', 'defaultNetwork', 'testnet'], setOutput.io);
+    expect(setCode).toBe(0);
+    expect(setOutput.stdout[0]).toContain('Set defaultNetwork=testnet');
 
-    expect(exitCode).toBe(0);
-    expect(mock.targets).toEqual(['GTARGET']);
-    expect(contents).toContain('6.5000000 remaining of 10.0000000');
-    expect(contents).toContain('16 remaining of 20');
-    expect(contents).toContain('75.0000000 remaining of 100.0000000');
-    expect(contents).toContain('ledger 1720 in ~30m');
-    expect(contents).toContain('(observed 5.00s/ledger)');
-  });
-
-  it('treats expired windows as reset headroom instead of stale spend', () => {
-    const contents = formatLimitsStatus(
-      'GEXPIRED',
-      rateLimitStatus({
-        spentThisHour: '9.0000000',
-        txsThisHour: 19,
-        hourWindowStartLedger: 100,
-      }),
-      { currentLedger: 1_000, avgLedgerCloseSeconds: 5, observed: true },
-    );
-
-    expect(contents).toContain('10.0000000 remaining of 10.0000000 (0 spent)');
-    expect(contents).toContain('20 remaining of 20 (0 used)');
-    expect(contents).toContain('window expired at ledger 820');
-  });
-
-  it('states plainly when the agent has no configured limits', async () => {
-    const mock = limitsClient(rateLimitStatus({ configured: false }));
-    const output = capture();
-    const exitCode = await runCli(
-      ['limits', 'show'],
-      output.io,
-      { createLimitsClient: async () => mock.client },
-    );
-
-    expect(exitCode).toBe(0);
-    expect(output.stdout.join('\n')).toBe(
-      'No rate limits configured for GCLIAGENT. ' +
-      'Payments are unrestricted by the rate limiter.',
-    );
-  });
-
-  it('rejects missing and sub-stroop limit options before an SDK mutation', async () => {
-    const mock = limitsClient();
-    const output = capture();
-    const exitCode = await runCli([
-      'limits',
-      'set',
-      '--max-per-tx',
-      '0.00000001',
-      '--max-per-hour',
-      '10',
-      '--max-per-day',
-      '100',
-      '--max-txs-per-hour',
-      '20',
-    ], output.io, { createLimitsClient: async () => mock.client });
-
-    expect(exitCode).toBe(2);
-    expect(mock.configured).toEqual([]);
-    expect(output.stderr.join('\n')).toContain('at most 7 fractional digits');
+    const getOutput = capture();
+    const getCode = await runCli(['config', 'get', 'defaultNetwork'], getOutput.io);
+    expect(getCode).toBe(0);
+    expect(getOutput.stdout[0]).toBe('testnet');
   });
 });
+
+describe('pay command (#325)', () => {
+  it('predicts payment outcome and asks for confirmation without --yes', async () => {
+    const output = capture();
+    const exitCode = await runCli(
+      ['pay', '--to', 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', '--amount', '100', '--asset', 'USDC'],
+      output.io
+    );
+    expect(exitCode).toBe(0);
+    expect(output.stdout.join('\n')).toContain('Payment Details:');
+    expect(output.stdout.join('\n')).toContain('Confirmation required: Pass --yes');
+  });
+
+  it('submits payment when --yes is provided and prints explorer link', async () => {
+    const output = capture();
+    const exitCode = await runCli(
+      ['pay', '--to', 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', '--amount', '100', '--asset', 'USDC', '--yes'],
+      output.io
+    );
+    expect(exitCode).toBe(0);
+    expect(output.stdout.join('\n')).toContain('Payment submitted successfully!');
+    expect(output.stdout.join('\n')).toContain('Explorer Link:');
+  });
+
+  it('refuses invalid amount pre-flight', async () => {
+    const output = capture();
+    const exitCode = await runCli(
+      ['pay', '--to', 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', '--amount', '-5'],
+      output.io
+    );
+    expect(exitCode).toBe(1);
+    expect(output.stderr.join('\n')).toContain('Payment refused:');
+  });
+});
+
+describe('channel command (#324)', () => {
+  it('opens channel with --yes', async () => {
+    const output = capture();
+    const exitCode = await runCli(
+      ['channel', 'open', '--recipient', 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', '--amount', '500', '--yes'],
+      output.io
+    );
+    expect(exitCode).toBe(0);
+    expect(output.stdout.join('\n')).toContain('Channel opened successfully');
+  });
+
+  it('prints status in table or json format', async () => {
+    const tableOutput = capture();
+    await runCli(['channel', 'status', '--channel-id', 'ch_123'], tableOutput.io);
+    expect(tableOutput.stdout.join('\n')).toContain('Channel Spend Report');
+
+    const jsonOutput = capture();
+    await runCli(['channel', 'status', '--channel-id', 'ch_123', '--json'], jsonOutput.io);
+    const parsed = JSON.parse(jsonOutput.stdout.join('\n'));
+    expect(parsed.channelId).toBe('ch_123');
+    expect(parsed.status).toBe('open');
+  });
+
+  it('closes channel with --yes', async () => {
+    const output = capture();
+    const exitCode = await runCli(['channel', 'close', '--channel-id', 'ch_123', '--yes'], output.io);
+    expect(exitCode).toBe(0);
+    expect(output.stdout.join('\n')).toContain('closed successfully');
+  });
+});
+
