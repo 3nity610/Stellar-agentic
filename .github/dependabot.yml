@@ -1,107 +1,285 @@
+# Dependency updates.
+#
+# This repo has four independent dependency graphs, and each one has bitten us:
+#
+#   npm     — the pnpm workspace (packages/*, integrations/*, dashboard)
+#   cargo   — four separate Rust workspaces with four separate lockfiles
+#   pip     — python/pyproject.toml, plus the resolver that has to agree with
+#              packages/core/src/math byte-for-byte
+#   actions — every `uses:` in .github/workflows/
+#
+# The concrete incident that motivated this: a day lost to soroban-env-host
+# resolving an incompatible ed25519-dalek, from an unpinned cargo graph. That
+# is exactly the class of problem an automated bump surfaces in a PR, with a
+# diff and a CI run attached, instead of as a mystery in a release branch.
+#
+# Grouping is deliberate. Ungrouped, a single transitive bump fans out into a
+# dozen PRs a week and trains everyone to close them unread; grouped, one PR
+# carries one ecosystem's worth of change and is actually reviewable. See
+# "Dependency updates" in CONTRIBUTING.md for the triage expectation.
+#
+# `ignore` lists the bumps that are a decision, not a chore — read the PR body
+# comment on each before deciding whether to lift one.
+
 version: 2
 
 updates:
-  - package-ecosystem: "npm"
-    directory: "/"
+  # ── pnpm workspace ─────────────────────────────────────────────────────────
+  #
+  # root covers the workspace root (turbo, typedoc, tsx) and `packages/*` +
+  # `integrations/*` + `dashboard`, which is the whole `pnpm-workspace.yaml`
+  # globs. Dependabot groups per directory so a dashboard-only dependency
+  # bump does not drag the SDK's tree into review with it.
+  - package-ecosystem: npm
+    directory: /
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Etc/UTC"
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - npm
+    commit-message:
+      prefix: "chore(deps)"
     groups:
-      npm-patch-updates:
-        applies-to: "version-updates"
+      # The workspace's own tooling — bumping turbo or typedoc touches every
+      # package's build, so it lands as one reviewed change.
+      workspace-tooling:
         patterns:
-          - "*"
+          - "turbo"
+          - "typedoc"
+          - "typedoc-plugin-markdown"
+          - "tsx"
+      stellar-sdk:
+        patterns:
+          - "@stellar/stellar-sdk"
+          - "@stellar/*"
+      react-ecosystem:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "react-router-dom"
+          - "framer-motion"
+          - "recharts"
+      typescript-tooling:
+        patterns:
+          - "typescript"
+          - "vitest"
+          - "@vitest/*"
+          - "eslint"
+          - "@typescript-eslint/*"
+          - "@types/*"
+      # Everything else still ungrouped, batched so PR volume stays sane.
+      # No `patterns` here: a catch-all group with `update-types` only
+      # collects patch bumps, and anything that slipped past the specific
+      # groups above arrives as its own PR. A group may declare
+      # `update-types` *or* `patterns`, never both.
+      npm-patch:
         update-types:
-          - "patch"
+          - patch
+    ignore:
+      # The determinism contract: fixtures/determinism.json is generated from
+      # packages/core and asserted byte-for-byte by the TypeScript, Python and
+      # Rust suites. A bignumber.js bump is a numeric-behaviour change until
+      # proven otherwise, so it arrives as an explicit, human-chosen PR.
+      - dependency-name: bignumber.js
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
 
-  - package-ecosystem: "cargo"
-    directory: "/contracts"
+  # ── Rust: four workspaces, four lockfiles ─────────────────────────────────
+  #
+  # Listed separately because Dependabot treats each `directory` as an
+  # independent project, and because they are independent in practice:
+  #
+  #   contracts/       — the deployable WASM. Its Cargo.lock is committed on
+  #                      purpose (see .gitignore): the artifact that moves money
+  #                      must build from a dependency set someone reviewed.
+  #   sdk/rust/        — the published client SDK.
+  #   services/signer/ — the signing service, which holds the authority to move
+  #                      money. Highest bar in the repo; see the triage notes.
+  #   zk/              — the Groth16 solvency prover.
+  #
+  # Minor and major bumps are left ungrouped *and* ungated on purpose: a
+  # soroban-sdk or ark-* minor is a real API change that needs a human reading
+  # the changelog, which is the point of the exercise.
+  - package-ecosystem: cargo
+    directory: /contracts
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Etc/UTC"
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - cargo
+      - contracts
+    commit-message:
+      prefix: "chore(deps)"
     groups:
-      contracts-cargo-patch-updates:
-        applies-to: "version-updates"
-        patterns:
-          - "*"
+      cargo-patch:
         update-types:
-          - "patch"
+          - patch
+      # soroban-sdk moves the host-function ABI and the contract macro output.
+      # One PR, one review, not one PR per crate that depends on it.
+      soroban:
+        patterns:
+          - "soroban-sdk"
+          - "soroban-env-*"
+      # The known-bad resolution from the incident this config exists for is
+      # handled by the `ignore` rule below, not by a group: `exclude-patterns`
+      # is only meaningful next to `patterns`, and a group that selects nothing
+      # is a config error Dependabot rejects.
+    ignore:
+      # soroban-env-host declares ed25519-dalek ">=2.0.0" but does not compile
+      # against 3.x; until that is fixed upstream, Dependabot proposing it is
+      # noise, and taking it is a broken build. Lift this when the constraint
+      # changes — `cargo update -p ed25519-dalek` will tell you immediately.
+      - dependency-name: ed25519-dalek
+        update-types:
+          - version-update:semver-major
 
-  - package-ecosystem: "cargo"
-    directory: "/sdk/rust"
+  - package-ecosystem: cargo
+    directory: /sdk/rust
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Etc/UTC"
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - cargo
+    commit-message:
+      prefix: "chore(deps)"
     groups:
-      rust-sdk-cargo-patch-updates:
-        applies-to: "version-updates"
-        patterns:
-          - "*"
+      cargo-patch:
         update-types:
-          - "patch"
+          - patch
 
-  - package-ecosystem: "cargo"
-    directory: "/services/signer"
+  - package-ecosystem: cargo
+    directory: /services/signer
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Etc/UTC"
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - cargo
+      - security-sensitive
+    commit-message:
+      prefix: "chore(deps)"
     groups:
-      signer-cargo-patch-updates:
-        applies-to: "version-updates"
-        patterns:
-          - "*"
+      cargo-patch:
         update-types:
-          - "patch"
+          - patch
+      crypto-and-transport:
+        patterns:
+          - "ed25519-*"
+          - "x25519-*"
+          - "curve25519-*"
+          - "sha2"
+          - "sha3"
+          - "hmac"
+          - "subtle"
+          - "ring"
+          - "rustls*"
+          - "aws-lambda-*"
+          - "aws-sdk-*"
+    ignore:
+      # Same reason as contracts/: an unpinned resolution of this workspace
+      # does not compile. See the comment in contracts/ above.
+      - dependency-name: ed25519-dalek
+        update-types:
+          - version-update:semver-major
 
-  - package-ecosystem: "cargo"
-    directory: "/zk"
+  - package-ecosystem: cargo
+    directory: /zk
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Etc/UTC"
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - cargo
+      - zk
+    commit-message:
+      prefix: "chore(deps)"
     groups:
-      zk-cargo-patch-updates:
-        applies-to: "version-updates"
+      # ark-* must move together: a Groth16 proving key is only valid for the
+      # exact circuit-compiler/curve configuration it was generated with, so a
+      # split upgrade produces keys the on-chain verifier rejects.
+      ark-stack:
         patterns:
-          - "*"
+          - "ark-*"
+      cargo-patch:
         update-types:
-          - "patch"
+          - patch
 
-  - package-ecosystem: "pip"
-    directory: "/python"
+  # ── Python ─────────────────────────────────────────────────────────────────
+  - package-ecosystem: pip
+    directory: /python
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Etc/UTC"
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: "chore(deps)"
     groups:
-      python-patch-updates:
-        applies-to: "version-updates"
+      pip-dev-tools:
         patterns:
-          - "*"
+          - "pytest*"
+          - "ruff"
+          - "mypy*"
+          - "hatchling"
+      pip-patch:
         update-types:
-          - "patch"
+          - patch
+    ignore:
+      # The Python math modules are required to stay byte-identical with
+      # packages/core/src/math and sdk/rust/src/math. `decimal`'s behaviour is
+      # fixed by the language spec, but the *libraries* built on it are not —
+      # a bump here has to be read against fixtures/determinism.json.
+      - dependency-name: stellar-sdk
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
 
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  # ── GitHub Actions ─────────────────────────────────────────────────────────
+  #
+  # `actions/checkout@v4` is a floating tag: it can move to a Node runtime this
+  # repo's runner does not have, or pull in a new default permission set, with
+  # no diff to review. Pinning to the major plus dependabot's weekly bump is
+  # the standard middle ground — a supply-chain pin to a full commit SHA is
+  # stricter than this repo currently operates at, and mixing the two would
+  # mean half the workflows pinned and half not.
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Etc/UTC"
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "chore(ci)"
     groups:
-      github-actions-patch-updates:
-        applies-to: "version-updates"
+      # Every action in one PR: a workflow that mixes an old and a new Node
+      # runtime across steps is a confusing failure to bisect.
+      github-actions:
         patterns:
           - "*"
-        update-types:
-          - "patch"

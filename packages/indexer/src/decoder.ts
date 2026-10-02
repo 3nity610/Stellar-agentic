@@ -1,4 +1,4 @@
-import { scValToNative } from "@stellar/stellar-sdk";
+import { scValToNative, xdr } from "@stellar/stellar-sdk";
 import type { ContractKind, DecodedEvent, RawContractEvent } from "./types.js";
 
 const expectedLengths: Record<string, number> = {
@@ -24,6 +24,56 @@ const expectedLengths: Record<string, number> = {
   "state/limit": 2,
   "state/agent": 2,
 };
+
+export interface RawRpcEvent {
+  id: string;
+  type: string;
+  ledger: number;
+  ledgerClosedAt: string;
+  contractId: string;
+  txHash: string;
+  topic: string[];
+  value: string;
+  pagingToken: string;
+  inSuccessfulContractCall?: boolean;
+}
+
+export function toRawContractEvent(event: RawRpcEvent): RawContractEvent {
+  return {
+    id: event.id,
+    ledger: event.ledger,
+    ledgerClosedAt: event.ledgerClosedAt,
+    txHash: event.txHash,
+    pagingToken: event.pagingToken,
+    topic: event.topic.map((t) => xdr.ScVal.fromXDR(t, "base64")),
+    value: xdr.ScVal.fromXDR(event.value, "base64"),
+  };
+}
+
+export function decodeRpcEvent(
+  event: RawRpcEvent,
+  contractKind: ContractKind,
+  contractAddress: string,
+): DecodedEvent {
+  return decodeEvent(toRawContractEvent(event), contractKind, contractAddress);
+}
+
+export function matchesTopicFilter(
+  event: RawRpcEvent,
+  namespace: string,
+  action?: string,
+): boolean {
+  if (event.topic.length < 2) return false;
+  try {
+    const ns = scalar(scValToNative(xdr.ScVal.fromXDR(event.topic[0], "base64")));
+    if (ns !== namespace) return false;
+    if (action === undefined) return true;
+    const act = scalar(scValToNative(xdr.ScVal.fromXDR(event.topic[1], "base64")));
+    return act === action;
+  } catch {
+    return false;
+  }
+}
 
 function scalar(value: unknown): string {
   if (typeof value === "bigint") return value.toString();

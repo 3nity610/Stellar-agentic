@@ -495,6 +495,20 @@ export class EventStore {
     );
   }
 
+  /**
+   * Row count of the `events` table.
+   *
+   * Distinct from an indexer's cumulative "events processed" counter: replaying
+   * a rollback window re-commits events already stored, so that counter is a
+   * measure of ingest work while this is a measure of durable state.
+   */
+  eventCount(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS total FROM events").get() as {
+      total: number;
+    };
+    return row.total;
+  }
+
   channelState(channelId: string): unknown | undefined {
     return this.latestSnapshot("channel", "channel", channelId);
   }

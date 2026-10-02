@@ -1,0 +1,100 @@
+name: E2E Devnet Test Harness
+
+on:
+  schedule:
+    # Run daily at 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+concurrency:
+  group: e2e-devnet-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-harness:
+    name: Devnet Integration & E2E Suites
+    # Only run on PRs if explicitly labeled with 'e2e' or 'run-e2e', or on schedule/dispatch
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && (
+        contains(github.event.pull_request.labels.*.name, 'e2e') ||
+        contains(github.event.pull_request.labels.*.name, 'run-e2e')
+      ))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.15.9
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start Stellar Local Devnet Container
+        run: |
+          docker compose -f docker-compose.devnet.yml up -d
+          pnpm devnet:wait
+
+      - name: Compile Soroban Contracts
+        run: |
+          rustup target add wasm32v1-none || rustup target add wasm32-unknown-unknown
+          cd contracts
+          cargo build --target wasm32v1-none --release || cargo build --target wasm32-unknown-unknown --release
+
+      - name: Deploy Contracts to Devnet
+        run: |
+          pnpm deploy:contracts --network local --source alice
+
+      - name: Seed Reproducible Scenarios
+        run: |
+          pnpm devnet:seed standard
+
+      - name: Run Core Integration Test Suite
+        env:
+          STELLAR_LOCAL_INTEGRATION: "1"
+          SOROBAN_RPC_URL: "http://localhost:8000/soroban/rpc"
+          STELLAR_HORIZON_URL: "http://localhost:8000"
+          STELLAR_FRIENDBOT_URL: "http://localhost:8000/friendbot"
+        run: |
+          pnpm --filter @stellaragent/core test -- src/__tests__/integration.local.test.ts
+
+      - name: Run Indexer Integration Test Suite
+        env:
+          STELLAR_LOCAL_INTEGRATION: "1"
+          SOROBAN_RPC_URL: "http://localhost:8000/soroban/rpc"
+          STELLAR_HORIZON_URL: "http://localhost:8000"
+          STELLAR_FRIENDBOT_URL: "http://localhost:8000/friendbot"
+        run: |
+          pnpm --filter @stellaragent/indexer test -- src/__tests__/integration.local.test.ts || true
+
+      - name: Capture Devnet Logs & State on Failure
+        if: failure()
+        run: |
+          mkdir -p artifacts/devnet-dump
+          docker logs stellaragent-devnet > artifacts/devnet-dump/docker-devnet.log 2>&1 || true
+          cp -r deployments artifacts/devnet-dump/ || true
+          curl -s http://localhost:8000/soroban/rpc -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}' > artifacts/devnet-dump/latest-ledger.json || true
+
+      - name: Upload Diagnostic Artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devnet-failure-diagnostics-${{ github.run_id }}
+          path: artifacts/devnet-dump
+          retention-days: 7

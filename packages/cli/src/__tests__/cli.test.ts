@@ -156,3 +156,91 @@ describe('route preview', () => {
     expect(formatQuotePreview(value)).toContain('broken-amm/VENUE_UNAVAILABLE');
   });
 });
+
+describe('config command (#329)', () => {
+  it('returns the config path', async () => {
+    const output = capture();
+    const exitCode = await runCli(['config', 'path'], output.io);
+    expect(exitCode).toBe(0);
+    expect(output.stdout[0]).toContain('.stellaragent');
+    expect(output.stdout[0]).toContain('config.json');
+  });
+
+  it('sets and gets configuration values', async () => {
+    const setOutput = capture();
+    const setCode = await runCli(['config', 'set', 'defaultNetwork', 'testnet'], setOutput.io);
+    expect(setCode).toBe(0);
+    expect(setOutput.stdout[0]).toContain('Set defaultNetwork=testnet');
+
+    const getOutput = capture();
+    const getCode = await runCli(['config', 'get', 'defaultNetwork'], getOutput.io);
+    expect(getCode).toBe(0);
+    expect(getOutput.stdout[0]).toBe('testnet');
+  });
+});
+
+describe('pay command (#325)', () => {
+  it('predicts payment outcome and asks for confirmation without --yes', async () => {
+    const output = capture();
+    const exitCode = await runCli(
+      ['pay', '--to', 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', '--amount', '100', '--asset', 'USDC'],
+      output.io
+    );
+    expect(exitCode).toBe(0);
+    expect(output.stdout.join('\n')).toContain('Payment Details:');
+    expect(output.stdout.join('\n')).toContain('Confirmation required: Pass --yes');
+  });
+
+  it('submits payment when --yes is provided and prints explorer link', async () => {
+    const output = capture();
+    const exitCode = await runCli(
+      ['pay', '--to', 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', '--amount', '100', '--asset', 'USDC', '--yes'],
+      output.io
+    );
+    expect(exitCode).toBe(0);
+    expect(output.stdout.join('\n')).toContain('Payment submitted successfully!');
+    expect(output.stdout.join('\n')).toContain('Explorer Link:');
+  });
+
+  it('refuses invalid amount pre-flight', async () => {
+    const output = capture();
+    const exitCode = await runCli(
+      ['pay', '--to', 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', '--amount', '-5'],
+      output.io
+    );
+    expect(exitCode).toBe(1);
+    expect(output.stderr.join('\n')).toContain('Payment refused:');
+  });
+});
+
+describe('channel command (#324)', () => {
+  it('opens channel with --yes', async () => {
+    const output = capture();
+    const exitCode = await runCli(
+      ['channel', 'open', '--recipient', 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', '--amount', '500', '--yes'],
+      output.io
+    );
+    expect(exitCode).toBe(0);
+    expect(output.stdout.join('\n')).toContain('Channel opened successfully');
+  });
+
+  it('prints status in table or json format', async () => {
+    const tableOutput = capture();
+    await runCli(['channel', 'status', '--channel-id', 'ch_123'], tableOutput.io);
+    expect(tableOutput.stdout.join('\n')).toContain('Channel Spend Report');
+
+    const jsonOutput = capture();
+    await runCli(['channel', 'status', '--channel-id', 'ch_123', '--json'], jsonOutput.io);
+    const parsed = JSON.parse(jsonOutput.stdout.join('\n'));
+    expect(parsed.channelId).toBe('ch_123');
+    expect(parsed.status).toBe('open');
+  });
+
+  it('closes channel with --yes', async () => {
+    const output = capture();
+    const exitCode = await runCli(['channel', 'close', '--channel-id', 'ch_123', '--yes'], output.io);
+    expect(exitCode).toBe(0);
+    expect(output.stdout.join('\n')).toContain('closed successfully');
+  });
+});
+
