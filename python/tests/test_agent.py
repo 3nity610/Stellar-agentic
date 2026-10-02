@@ -19,6 +19,7 @@ from stellar_sdk import Keypair
 from stellar_sdk.exceptions import Ed25519SecretSeedInvalidError
 
 from stellaragent import StellarAgent
+from stellaragent.agent import DOCS_BASE
 from stellaragent.contracts import (
     CONTRACT_KEYS,
     UNCONFIGURED_CONTRACTS,
@@ -278,6 +279,16 @@ class TestPayForAPI:
     def test_refuses_with_no_open_channel(self) -> None:
         with pytest.raises(RuntimeError, match="No active payment channel"):
             make_agent().pay_for_api(PayForAPIParams(endpoint="https://x", amount="0.001"))
+
+    def test_the_refusal_says_how_to_fix_it(self) -> None:
+        """#374: the message has to carry the remedy, not just the diagnosis."""
+        with pytest.raises(RuntimeError) as excinfo:
+            make_agent().pay_for_api(PayForAPIParams(endpoint="https://x", amount="0.001"))
+        message = str(excinfo.value)
+        assert "open_channel()" in message
+        assert DOCS_BASE in message
+        # Same page the TypeScript SDK points at for NO_ACTIVE_CHANNEL.
+        assert message.rstrip().endswith("StellarAgent.md#openchannel")
 
     def test_checks_the_channel_before_validating_arguments(self) -> None:
         # Same ordering as the TypeScript implementation.

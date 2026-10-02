@@ -46,6 +46,13 @@ from .types import (
     TxResult,
 )
 
+#: Base for documentation links embedded in error messages. Mirrors the
+#: TypeScript SDK's ``DOCS_BASE`` (``packages/core/src/errors.ts``) so the two
+#: SDKs point a caller at the same page for the same failure.
+DOCS_BASE = (
+    "https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/"
+)
+
 __all__ = ["StellarAgent"]
 
 FRIENDBOT_URL = "https://friendbot.stellar.org"
@@ -197,7 +204,12 @@ class StellarAgent:
         :raises NotImplementedError: pending real Soroban invocation.
         """
         if self._active_channel_id is None:
-            raise RuntimeError("No active payment channel. Call open_channel() first.")
+            raise RuntimeError(
+                "No active payment channel. Call open_channel() first.\n\n"
+                "Open one with open_channel(), or pass an explicit channel_id to "
+                "this call.\n"
+                f"See {DOCS_BASE}docs/api/core/classes/StellarAgent.md#openchannel"
+            )
 
         if (params.dest_asset is not None) != (params.min_received is not None):
             raise ValueError("dest_asset and min_received must be set together")
