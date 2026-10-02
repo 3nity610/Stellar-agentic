@@ -24,6 +24,15 @@ from .bid import (
     score_bid,
     select_best_bid,
 )
+from .circuit_breaker import (
+    CircuitBreakerClient,
+    CircuitBreakerError,
+    InvalidContractIdError,
+    execute_proposal,
+    is_paused,
+    propose_pause,
+    propose_unpause,
+)
 from .contracts import (
     CONTRACT_KEYS,
     UNCONFIGURED_CONTRACTS,
@@ -134,6 +143,14 @@ __all__ = [
     "remaining_budget",
     "score_bid",
     "select_best_bid",
+    # circuit breaker
+    "CircuitBreakerClient",
+    "CircuitBreakerError",
+    "InvalidContractIdError",
+    "execute_proposal",
+    "is_paused",
+    "propose_pause",
+    "propose_unpause",
     # contracts
     "CONTRACT_KEYS",
     "UNCONFIGURED_CONTRACTS",
