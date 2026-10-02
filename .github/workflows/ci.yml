@@ -178,6 +178,9 @@ jobs:
       - name: Generated TS/Python contract types are up to date
         run: pnpm contract-types:check
 
+      - name: Shared SDK mock responses match contract specs
+        run: pnpm contract-responses:check
+
   # ── Public API surface + generated reference ─────────────────────────────
   #
   # Two independent things, both derived from the same TSDoc comments:
