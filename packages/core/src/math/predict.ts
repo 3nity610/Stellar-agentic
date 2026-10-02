@@ -34,6 +34,15 @@
  * below is cited inline against `contracts/rate_limiter/src/lib.rs` and
  * `contracts/payment_channel/src/lib.rs`.
  *
+ * ## Sliding windows
+ *
+ * The contracts now use a bucketed sliding-window accounting scheme rather
+ * than snapping whole windows on expiry. Instead of a single
+ * `hourly_spend`/`daily_spend` accumulator that resets wholesale, spend is
+ * tracked across a small ring of sub-window buckets; the effective spend at
+ * any ledger is the sum of the buckets still inside the trailing window.
+ * This bounds the burst across a window boundary by the configured rate.
+ *
  * ## A deliberate faithfulness quirk: `active` does not gate `check()`
  *
  * `RateLimiter.kill_agent` sets `RateLimit.active = false`, but
@@ -73,6 +82,14 @@ export const LEDGERS_PER_CHANNEL_PERIOD: Record<SpendPeriod, number> = {
 export const RATE_LIMIT_LEDGERS_PER_HOUR = 720;
 export const RATE_LIMIT_LEDGERS_PER_DAY = 17_280;
 
+/**
+ * Number of sub-window buckets per hourly/daily window in the contracts'
+ * bucketed sliding-window scheme. Each bucket covers
+ * `RATE_LIMIT_LEDGERS_PER_HOUR / RATE_LIMIT_BUCKETS_PER_HOUR` ledgers.
+ */
+export const RATE_LIMIT_BUCKETS_PER_HOUR = 6;
+export const RATE_LIMIT_BUCKETS_PER_DAY = 24;
+
 // ─── Input state ──────────────────────────────────────────────────────────────
 
 /** The subset of `Channel` (contracts/payment_channel/src/lib.rs) needed to predict `pay`'s spend-limit check. */
@@ -94,9 +111,12 @@ export interface RateLimitSpendState {
   maxPerHour: string;
   maxPerDay: string;
   maxTxsPerHour: number;
-  hourlySpend: string;
-  dailySpend: string;
-  hourlyTxCount: number;
+  /** Per-bucket hourly spend, oldest bucket first, length `RATE_LIMIT_BUCKETS_PER_HOUR`. */
+  hourlyBuckets: string[];
+  /** Per-bucket daily spend, oldest bucket first, length `RATE_LIMIT_BUCKETS_PER_DAY`. */
+  dailyBuckets: string[];
+  /** Per-bucket hourly tx counts, oldest bucket first, length `RATE_LIMIT_BUCKETS_PER_HOUR`. */
+  hourlyTxBuckets: number[];
   hourWindowStartLedger: number;
   dayWindowStartLedger: number;
 }
@@ -150,6 +170,47 @@ export function ledgersRemainingInWindow(
   currentLedger: number,
 ): number {
   return Math.max(0, windowStartLedger + ledgersPerWindow - currentLedger);
+}
+
+/**
+ * Sum the buckets still inside the trailing window, dropping any bucket that
+ * has fully aged out. Mirrors the contracts' bucketed sliding-window
+ * accounting: a bucket is live while its start ledger is within
+ * `ledgersPerWindow` of `currentLedger`.
+ */
+export function sumLiveBuckets(
+  buckets: string[],
+  windowStartLedger: number,
+  ledgersPerWindow: number,
+  currentLedger: number,
+): string {
+  const bucketSize = Math.floor(ledgersPerWindow / buckets.length);
+  let total = bn('0');
+  for (let i = 0; i < buckets.length; i++) {
+    const bucketStart = windowStartLedger + i * bucketSize;
+    if (!isWindowExpired(bucketStart, ledgersPerWindow, currentLedger)) {
+      total = add(total, bn(buckets[i]));
+    }
+  }
+  return total.toString();
+}
+
+/** As `sumLiveBuckets`, but for integer tx counts. */
+export function sumLiveTxBuckets(
+  buckets: number[],
+  windowStartLedger: number,
+  ledgersPerWindow: number,
+  currentLedger: number,
+): number {
+  const bucketSize = Math.floor(ledgersPerWindow / buckets.length);
+  let total = 0;
+  for (let i = 0; i < buckets.length; i++) {
+    const bucketStart = windowStartLedger + i * bucketSize;
+    if (!isWindowExpired(bucketStart, ledgersPerWindow, currentLedger)) {
+      total += buckets[i];
+    }
+  }
+  return total;
 }
 
 // ─── The predictor ────────────────────────────────────────────────────────────
@@ -208,22 +269,30 @@ export function predictPaymentOutcome({
       reasons.push('rate_limit_per_tx');
     }
 
-    const hourExpired = isWindowExpired(
+    // Bucketed sliding-window accounting: sum only the buckets still inside
+    // the trailing hour/day window rather than resetting wholesale on expiry.
+    const effectiveHourlySpend = bn(
+      sumLiveBuckets(
+        rateLimitState.hourlyBuckets,
+        rateLimitState.hourWindowStartLedger,
+        RATE_LIMIT_LEDGERS_PER_HOUR,
+        currentLedger,
+      ),
+    );
+    const effectiveDailySpend = bn(
+      sumLiveBuckets(
+        rateLimitState.dailyBuckets,
+        rateLimitState.dayWindowStartLedger,
+        RATE_LIMIT_LEDGERS_PER_DAY,
+        currentLedger,
+      ),
+    );
+    const effectiveHourlyTxCount = sumLiveTxBuckets(
+      rateLimitState.hourlyTxBuckets,
       rateLimitState.hourWindowStartLedger,
       RATE_LIMIT_LEDGERS_PER_HOUR,
       currentLedger,
     );
-    const dayExpired = isWindowExpired(
-      rateLimitState.dayWindowStartLedger,
-      RATE_LIMIT_LEDGERS_PER_DAY,
-      currentLedger,
-    );
-
-    // `check` zeroes `hourly_spend`/`hourly_tx_count` and/or `daily_spend`
-    // before checking, exactly like `reset_windows_if_needed`.
-    const effectiveHourlySpend = hourExpired ? bn('0') : bn(rateLimitState.hourlySpend);
-    const effectiveDailySpend = dayExpired ? bn('0') : bn(rateLimitState.dailySpend);
-    const effectiveHourlyTxCount = hourExpired ? 0 : rateLimitState.hourlyTxCount;
 
     // `check`: `if limit.hourly_spend + amount > limit.max_per_hour { return false; }`
     if (add(effectiveHourlySpend, amt).isGreaterThan(bn(rateLimitState.maxPerHour))) {
