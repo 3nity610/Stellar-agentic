@@ -3,6 +3,7 @@ members = [
     "agent_wallet_factory",
     "payment_channel",
     "escrow",
+    "reputation_registry",
     "rate_limiter",
     "circuit_breaker",
     "price_oracle",
