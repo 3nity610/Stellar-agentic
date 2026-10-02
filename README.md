@@ -3,12 +3,11 @@
 > **AI Agent Payment Rails built on the Stellar blockchain.**  
 > The fastest, cheapest way to give AI agents autonomous payment capabilities.
 
-[![CI](https://github.com/Enniwealth/Stellar-agentic/actions/workflows/ci.yml/badge.svg)](https://github.com/Enniwealth/Stellar-agentic/actions/workflows/ci.yml)
+[![CI](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/actions/workflows/ci.yml/badge.svg)](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Stellar](https://img.shields.io/badge/Built%20on-Stellar-blue)](https://stellar.org)
 [![Soroban](https://img.shields.io/badge/Smart%20Contracts-Soroban-purple)](https://soroban.stellar.org)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2)](https://discord.gg/stellaragent)
 
 ---
 
@@ -302,7 +301,7 @@ Without them the page says so instead of showing zeros. See
 
 We welcome contributors! See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started.
 
-Good first issues are labeled [`good first issue`](https://github.com/yourusername/stellaragent/labels/good%20first%20issue).
+Good first issues are labeled [`good first issue`](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/labels/good%20first%20issue).
 
 ---
 

@@ -453,4 +453,4 @@ If you're new to the project, start here:
 
 ## Questions?
 
-Open a [GitHub Discussion](https://github.com/yourusername/stellaragent/discussions) or join our [Discord](https://discord.gg/stellaragent).
+Open a [GitHub Discussion](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/discussions) or an issue on the [tracker](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/issues).
