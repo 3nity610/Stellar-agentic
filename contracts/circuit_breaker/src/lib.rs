@@ -17,6 +17,18 @@
 //!
 //! The trusted node set itself is rotated only by the admin, via
 //! `set_trusted_nodes`.
+//!
+//! ## Events
+//!
+//! All events use the topic tuple `(symbol_short!("cb"), <action>)` where
+//! `<action>` is a short symbol naming the state transition. See
+//! `docs/events.md` for the canonical, cross-contract event reference.
+//!
+//! - `("cb", "nodes")`   — data: `Vec<Address>` (new trusted node set)
+//! - `("cb", "propose")` — data: `Address` (node that proposed a pause)
+//! - `("cb", "paused")`  — data: `bool` (always `true`)
+//! - `("cb", "unpropos")`— data: `Address` (node that proposed an unpause)
+//! - `("cb", "unpause")` — data: `bool` (always `false`)
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Map, Vec};
 

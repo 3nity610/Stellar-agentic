@@ -1,3 +1,21 @@
+//! # Rate Limiter Contract
+//!
+//! Prevents runaway agents from draining wallets.
+//! Enforces per-transaction, per-minute, and per-hour caps on-chain.
+//! Works as a standalone guard composable with PaymentChannel.
+//!
+//! ## Events
+//!
+//! All events use a `(symbol_short!("rl"), symbol_short!("<action>"))` topic
+//! tuple. See `docs/events.md` for the full cross-contract event catalogue.
+//!
+//! | Topics                          | Data                     | Emitted by        |
+//! |---------------------------------|--------------------------|-------------------|
+//! | `("rl", "set")`                 | `(agent, limit)`         | `set_limits`      |
+//! | `("rl", "recorded")`            | `(agent, amount)`        | `record_payment`  |
+//! | `("rl", "updated")`             | `(agent, limit)`         | `update_limits`   |
+//! | `("rl", "killed")`              | `agent`                  | `kill_agent`      |
+
 #![no_std]
 
 //! # Rate Limiter Contract
@@ -97,8 +115,8 @@ impl RateLimiter {
         Self::save_limit(&env, &agent, limit.clone());
         env.events().publish(
             (
-                soroban_sdk::symbol_short!("state"),
-                soroban_sdk::symbol_short!("limit"),
+                soroban_sdk::symbol_short!("rl"),
+                soroban_sdk::symbol_short!("set"),
             ),
             (agent, limit),
         );
@@ -172,8 +190,8 @@ impl RateLimiter {
         );
         env.events().publish(
             (
-                soroban_sdk::symbol_short!("state"),
-                soroban_sdk::symbol_short!("limit"),
+                soroban_sdk::symbol_short!("rl"),
+                soroban_sdk::symbol_short!("updated"),
             ),
             (agent, limit),
         );
@@ -210,8 +228,8 @@ impl RateLimiter {
         Self::save_limit(&env, &agent, limit.clone());
         env.events().publish(
             (
-                soroban_sdk::symbol_short!("state"),
-                soroban_sdk::symbol_short!("limit"),
+                soroban_sdk::symbol_short!("rl"),
+                soroban_sdk::symbol_short!("updated"),
             ),
             (agent, limit),
         );
@@ -239,8 +257,8 @@ impl RateLimiter {
         );
         env.events().publish(
             (
-                soroban_sdk::symbol_short!("state"),
-                soroban_sdk::symbol_short!("limit"),
+                soroban_sdk::symbol_short!("rl"),
+                soroban_sdk::symbol_short!("killed"),
             ),
             (agent, limit),
         );

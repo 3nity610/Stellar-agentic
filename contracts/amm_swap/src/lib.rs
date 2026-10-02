@@ -37,6 +37,20 @@ pub const RATE_SCALE: i128 = 10_000_000;
 #[contract]
 pub struct AmmSwap;
 
+/// Event topic/data layout for `amm_swap`.
+///
+/// Topics are always `(symbol_short!("amm_swap"), action, ...)`, matching the
+/// convention documented in `docs/events.md`. Data payloads are listed there.
+mod events {
+    use soroban_sdk::symbol_short;
+
+    pub const CONTRACT: soroban_sdk::Symbol = symbol_short!("amm_swap");
+    pub const INIT: soroban_sdk::Symbol = symbol_short!("init");
+    pub const FUND: soroban_sdk::Symbol = symbol_short!("fund");
+    pub const SET_RATE: soroban_sdk::Symbol = symbol_short!("set_rate");
+    pub const SWAP: soroban_sdk::Symbol = symbol_short!("swap");
+}
+
 #[contractimpl]
 impl AmmSwap {
     /// One-time setup. The first caller becomes the admin.
@@ -48,6 +62,7 @@ impl AmmSwap {
         env.storage()
             .instance()
             .set(&symbol_short!("admin"), &admin);
+        env.events().publish((events::CONTRACT, events::INIT), admin);
     }
 
     /// Admin-only: fund this contract's reserve of `token` so it can pay
@@ -56,6 +71,8 @@ impl AmmSwap {
         Self::require_admin(&env, &admin);
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&admin, &env.current_contract_address(), &amount);
+        env.events()
+            .publish((events::CONTRACT, events::FUND), (token, amount));
     }
 
     /// Admin-only: set the swap rate for `from_token` -> `to_token`.
@@ -69,6 +86,8 @@ impl AmmSwap {
         let mut by_from = Self::rates_for(&env, &from_token);
         by_from.set(to_token, rate);
         Self::save_rates_for(&env, &from_token, &by_from);
+        env.events()
+            .publish((events::CONTRACT, events::SET_RATE), (from_token, to_token, rate));
     }
 
     /// Whether this venue can currently quote a pair, without panicking.
@@ -123,6 +142,9 @@ impl AmmSwap {
 
         let to_client = token::Client::new(&env, &to_token);
         to_client.transfer(&env.current_contract_address(), &to, &out);
+
+        env.events()
+            .publish((events::CONTRACT, events::SWAP), (from_token, from_amount, to_token, out, to));
 
         out
     }
