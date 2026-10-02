@@ -1,0 +1,74 @@
+name: Local Integration
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  local-integration:
+    name: Local Integration Suites
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none, wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+
+      - name: Cache stellar-cli
+        id: cache-stellar-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/stellar
+          key: ${{ runner.os }}-stellar-cli-25.1.0-bin
+
+      - name: Install stellar-cli
+        if: steps.cache-stellar-cli.outputs.cache-hit != 'true'
+        run: |
+          curl -sL -o /tmp/stellar-cli.tar.gz \
+            https://github.com/stellar/stellar-cli/releases/download/v25.1.0/stellar-cli-25.1.0-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf /tmp/stellar-cli.tar.gz -C ~/.cargo/bin
+          chmod +x ~/.cargo/bin/stellar
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start local network
+        run: |
+          stellar network start local
+        
+      - name: Deploy contracts and set env
+        run: |
+          stellar keys generate alice --network local || true
+          pnpm deploy:contracts --network local --source alice > deploy.log
+          cat deploy.log
+          grep "STELLARAGENT_LOCAL_" deploy.log | sed 's/^[ \t]*//' >> $GITHUB_ENV
+
+      - name: Run core local integration tests
+        env:
+          STELLAR_LOCAL_INTEGRATION: '1'
+        run: pnpm --filter @stellaragent/core test
+
+      - name: Run indexer local integration tests
+        env:
+          STELLAR_LOCAL_INTEGRATION: '1'
+        run: pnpm --filter @stellaragent/indexer test
