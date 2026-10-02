@@ -69,6 +69,16 @@ pub struct RateLimit {
 
 // ─── Contract ────────────────────────────────────────────────────────────────
 
+
+pub const DAY_IN_LEDGERS: u32 = 17280;
+pub const INSTANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
+
+
+pub fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
 #[contract]
 pub struct RateLimiter;
 
@@ -85,6 +95,7 @@ impl RateLimiter {
         max_per_day: i128,
         max_txs_per_hour: u32,
     ) {
+        extend_instance_ttl(&env);
         owner.require_auth();
 
         if max_per_tx <= 0 || max_per_hour <= 0 || max_per_day <= 0 {
@@ -126,6 +137,7 @@ impl RateLimiter {
     /// Returns true if allowed, false if it would be blocked.
     /// Does NOT modify state — call `record_payment` after a successful tx.
     pub fn check(env: Env, agent: Address, amount: i128) -> bool {
+        extend_instance_ttl(&env);
         if !Self::has_limit(&env, &agent) {
             return true; // no limit configured = allow
         }
@@ -163,6 +175,7 @@ impl RateLimiter {
     /// Record a payment after it has been successfully executed.
     /// Must be called by the payment channel or an authorized contract.
     pub fn record_payment(env: Env, recorder: Address, agent: Address, amount: i128) {
+        extend_instance_ttl(&env);
         recorder.require_auth();
 
         if !Self::has_limit(&env, &agent) {
@@ -207,6 +220,7 @@ impl RateLimiter {
         max_per_day: i128,
         max_txs_per_hour: u32,
     ) {
+        extend_instance_ttl(&env);
         owner.require_auth();
 
         let mut limit = Self::load_limit(&env, &agent);
@@ -237,6 +251,7 @@ impl RateLimiter {
 
     /// Emergency kill switch — disable an agent immediately
     pub fn kill_agent(env: Env, owner: Address, agent: Address) {
+        extend_instance_ttl(&env);
         owner.require_auth();
 
         let mut limit = Self::load_limit(&env, &agent);
@@ -267,10 +282,12 @@ impl RateLimiter {
     // ── Queries ──────────────────────────────────────────────────────────────
 
     pub fn get_limits(env: Env, agent: Address) -> RateLimit {
+        extend_instance_ttl(&env);
         Self::load_limit(&env, &agent)
     }
 
     pub fn is_active(env: Env, agent: Address) -> bool {
+        extend_instance_ttl(&env);
         if !Self::has_limit(&env, &agent) {
             return true;
         }

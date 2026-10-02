@@ -212,6 +212,23 @@ pub struct SolvencyProof {
 
 // ─── Contract ────────────────────────────────────────────────────────────────
 
+
+pub const DAY_IN_LEDGERS: u32 = 17280;
+pub const INSTANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
+
+pub const PERSISTENT_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
+
+pub fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
+
+pub fn extend_persistent_ttl(env: &Env, key: &DataKey) {
+    env.storage().persistent().extend_ttl(key, PERSISTENT_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT);
+}
+
 #[contract]
 pub struct PaymentChannel;
 
@@ -236,6 +253,7 @@ impl PaymentChannel {
         limit_per_period: i128,
         period: SpendPeriod,
     ) -> u64 {
+        extend_instance_ttl(&env);
         owner.require_auth();
 
         if deposit <= 0 {
@@ -322,6 +340,7 @@ impl PaymentChannel {
         amount: i128,
         memo: soroban_sdk::Bytes,
     ) {
+        extend_instance_ttl(&env);
         Self::require_not_paused(&env);
 
         agent.require_auth();
@@ -462,6 +481,7 @@ impl PaymentChannel {
         min_received: i128,
         memo: soroban_sdk::Bytes,
     ) -> i128 {
+        extend_instance_ttl(&env);
         Self::require_not_paused(&env);
 
         agent.require_auth();
@@ -584,6 +604,7 @@ impl PaymentChannel {
         valid_until_ledger: u32,
         memo: soroban_sdk::Bytes,
     ) -> i128 {
+        extend_instance_ttl(&env);
         Self::require_not_paused(&env);
         agent.require_auth();
 
@@ -683,6 +704,7 @@ impl PaymentChannel {
 
     /// Owner tops up a channel with more tokens
     pub fn top_up(env: Env, owner: Address, channel_id: u64, amount: i128) {
+        extend_instance_ttl(&env);
         owner.require_auth();
 
         let channels: Map<u64, Channel> = env
@@ -734,6 +756,7 @@ impl PaymentChannel {
 
     /// Owner closes a channel and reclaims unspent funds
     pub fn close_channel(env: Env, owner: Address, channel_id: u64) {
+        extend_instance_ttl(&env);
         owner.require_auth();
 
         let mut channels: Map<u64, Channel> = env
@@ -790,6 +813,7 @@ impl PaymentChannel {
     /// Wire this channel contract up to a deployed CircuitBreaker contract.
     /// The first caller to set it becomes the admin for future rotations.
     pub fn set_circuit_breaker(env: Env, admin: Address, circuit_breaker: Address) {
+        extend_instance_ttl(&env);
         admin.require_auth();
 
         let admin_key = symbol_short!("cb_admin");
@@ -814,6 +838,7 @@ impl PaymentChannel {
     /// cross-asset conversions. The first caller to set it becomes the
     /// admin for future rotations, mirroring `set_circuit_breaker`.
     pub fn set_price_oracle(env: Env, admin: Address, price_oracle: Address) {
+        extend_instance_ttl(&env);
         admin.require_auth();
 
         let admin_key = symbol_short!("po_admin");
@@ -838,6 +863,7 @@ impl PaymentChannel {
     /// first caller to set it becomes the admin for future rotations,
     /// mirroring `set_circuit_breaker`.
     pub fn set_amm(env: Env, admin: Address, amm: Address) {
+        extend_instance_ttl(&env);
         admin.require_auth();
 
         let admin_key = symbol_short!("amm_admin");
@@ -876,6 +902,7 @@ impl PaymentChannel {
         voucher_signer: BytesN<32>,
         dispute_ledgers: u32,
     ) {
+        extend_instance_ttl(&env);
         owner.require_auth();
 
         if dispute_ledgers < MIN_DISPUTE_LEDGERS {
@@ -913,6 +940,7 @@ impl PaymentChannel {
     /// Increases an existing allocation rather than replacing it, so topping up
     /// a busy recipient does not require settling first.
     pub fn allocate(env: Env, owner: Address, channel_id: u64, recipient: Address, amount: i128) {
+        extend_instance_ttl(&env);
         owner.require_auth();
 
         if amount <= 0 {
@@ -963,6 +991,7 @@ impl PaymentChannel {
     /// Also the sweep for what is left after allocations finalise, which is why
     /// it is callable on a closed channel.
     pub fn withdraw_free(env: Env, owner: Address, channel_id: u64) -> i128 {
+        extend_instance_ttl(&env);
         owner.require_auth();
 
         let mut channels = Self::load_channels(&env);
@@ -1007,6 +1036,7 @@ impl PaymentChannel {
         cumulative_amount: i128,
         signature: BytesN<64>,
     ) -> i128 {
+        extend_instance_ttl(&env);
         Self::require_not_paused(&env);
 
         let channels = Self::load_channels(&env);
@@ -1059,6 +1089,7 @@ impl PaymentChannel {
         cumulative_amount: i128,
         signature: BytesN<64>,
     ) {
+        extend_instance_ttl(&env);
         Self::require_not_paused(&env);
         closer.require_auth();
 
@@ -1126,6 +1157,7 @@ impl PaymentChannel {
         cumulative_amount: i128,
         signature: BytesN<64>,
     ) {
+        extend_instance_ttl(&env);
         let channels = Self::load_channels(&env);
         let channel = channels.get(channel_id).expect("channel not found");
 
@@ -1171,6 +1203,7 @@ impl PaymentChannel {
     /// Pay out an expired close. Callable by anyone — there is nothing left to
     /// decide, and requiring a specific caller would let one side stall.
     pub fn finalize(env: Env, channel_id: u64, recipient: Address) -> i128 {
+        extend_instance_ttl(&env);
         let channels = Self::load_channels(&env);
         let channel = channels.get(channel_id).expect("channel not found");
 
@@ -1233,6 +1266,7 @@ impl PaymentChannel {
     // ── Queries ──────────────────────────────────────────────────────────────
 
     pub fn get_channel(env: Env, channel_id: u64) -> Channel {
+        extend_instance_ttl(&env);
         let channels: Map<u64, Channel> = env
             .storage()
             .instance()
@@ -1243,6 +1277,7 @@ impl PaymentChannel {
 
     /// Collateral reserved for one recipient, and what it has paid out.
     pub fn get_allocation(env: Env, channel_id: u64, recipient: Address) -> Allocation {
+        extend_instance_ttl(&env);
         Self::allocation(&env, channel_id, &recipient).unwrap_or(Allocation {
             amount: 0,
             settled: 0,
@@ -1251,17 +1286,20 @@ impl PaymentChannel {
 
     /// The close in flight for one recipient, if there is one.
     pub fn get_settlement(env: Env, channel_id: u64, recipient: Address) -> Option<Settlement> {
+        extend_instance_ttl(&env);
         Self::settlement(&env, channel_id, &recipient)
     }
 
     /// Collateral not reserved for any voucher allocation — what the on-chain
     /// `pay` path may spend, and what `withdraw_free` would return.
     pub fn free_collateral(env: Env, channel_id: u64) -> i128 {
+        extend_instance_ttl(&env);
         let channel = Self::get_channel(env, channel_id);
         channel.collateral - channel.allocated
     }
 
     pub fn remaining_this_period(env: Env, channel_id: u64) -> i128 {
+        extend_instance_ttl(&env);
         let channel = Self::get_channel(env, channel_id);
         channel.limit_per_period - channel.spent_this_period
     }
@@ -1272,6 +1310,7 @@ impl PaymentChannel {
     /// `verify_solvency_proof`. The first caller to set it becomes the
     /// admin for future rotations, mirroring `set_circuit_breaker`.
     pub fn set_solvency_vk(env: Env, admin: Address, vk: SolvencyVerifyingKey) {
+        extend_instance_ttl(&env);
         admin.require_auth();
 
         if vk.gamma_abc_g1.len() != 3 {
@@ -1303,6 +1342,7 @@ impl PaymentChannel {
     /// See `zk/solvency_proof` for the prover and `docs/zk-solvency-design.md`
     /// for the full circuit description.
     pub fn verify_solvency_proof(env: Env, channel_id: u64, proof: SolvencyProof) -> bool {
+        extend_instance_ttl(&env);
         let channel = Self::get_channel(env.clone(), channel_id);
         let vk: SolvencyVerifyingKey = env
             .storage()
@@ -1584,15 +1624,19 @@ impl PaymentChannel {
     }
 
     fn allocation(env: &Env, channel_id: u64, recipient: &Address) -> Option<Allocation> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Allocation(channel_id, recipient.clone()))
+        {
+            let key = DataKey::Allocation(channel_id, recipient.clone());
+            extend_persistent_ttl(&env, &key);
+            env.storage().persistent().get(&key)
+        }
     }
 
     fn settlement(env: &Env, channel_id: u64, recipient: &Address) -> Option<Settlement> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Settlement(channel_id, recipient.clone()))
+        {
+            let key = DataKey::Settlement(channel_id, recipient.clone());
+            extend_persistent_ttl(&env, &key);
+            env.storage().persistent().get(&key)
+        }
     }
 
     /// Every check a voucher must pass before it is allowed to influence a

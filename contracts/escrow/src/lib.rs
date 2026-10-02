@@ -73,6 +73,16 @@ pub struct Job {
 
 // ─── Contract ────────────────────────────────────────────────────────────────
 
+
+pub const DAY_IN_LEDGERS: u32 = 17280;
+pub const INSTANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
+
+
+pub fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
 #[contract]
 pub struct Escrow;
 
@@ -96,6 +106,7 @@ impl Escrow {
         deadline_ledger: u32,
         arbiter: Option<Address>,
     ) -> u64 {
+        extend_instance_ttl(&env);
         requester.require_auth();
 
         if amount <= 0 {
@@ -140,6 +151,7 @@ impl Escrow {
 
     /// Worker agent accepts an open job
     pub fn accept_job(env: Env, worker: Address, job_id: u64) {
+        extend_instance_ttl(&env);
         worker.require_auth();
 
         let mut job = Self::load_job(&env, job_id);
@@ -170,6 +182,7 @@ impl Escrow {
     /// # Arguments
     /// * `result` - Proof of work (IPFS hash, output hash, etc.)
     pub fn submit_result(env: Env, worker: Address, job_id: u64, result: Bytes) {
+        extend_instance_ttl(&env);
         worker.require_auth();
 
         let mut job = Self::load_job(&env, job_id);
@@ -199,6 +212,7 @@ impl Escrow {
 
     /// Requester (or arbiter) releases payment to the worker
     pub fn release(env: Env, releaser: Address, job_id: u64) {
+        extend_instance_ttl(&env);
         Self::require_not_paused(&env);
 
         releaser.require_auth();
@@ -235,6 +249,7 @@ impl Escrow {
 
     /// Requester reclaims funds if deadline passed with no result
     pub fn refund(env: Env, requester: Address, job_id: u64) {
+        extend_instance_ttl(&env);
         requester.require_auth();
 
         let mut job = Self::load_job(&env, job_id);
@@ -283,6 +298,7 @@ impl Escrow {
 
     /// Requester raises a dispute — locks funds until arbiter resolves
     pub fn dispute(env: Env, requester: Address, job_id: u64) {
+        extend_instance_ttl(&env);
         requester.require_auth();
 
         let mut job = Self::load_job(&env, job_id);
@@ -313,6 +329,7 @@ impl Escrow {
 
     /// Arbiter resolves a dispute
     pub fn resolve_dispute(env: Env, arbiter: Address, job_id: u64, favor_worker: bool) {
+        extend_instance_ttl(&env);
         Self::require_not_paused(&env);
         arbiter.require_auth();
 
@@ -353,6 +370,7 @@ impl Escrow {
     /// Wire this escrow contract up to a deployed CircuitBreaker contract.
     /// The first caller to set it becomes the admin for future rotations.
     pub fn set_circuit_breaker(env: Env, admin: Address, circuit_breaker: Address) {
+        extend_instance_ttl(&env);
         admin.require_auth();
 
         let admin_key = symbol_short!("cb_admin");
@@ -375,10 +393,12 @@ impl Escrow {
     // ── Queries ──────────────────────────────────────────────────────────────
 
     pub fn get_job(env: Env, job_id: u64) -> Job {
+        extend_instance_ttl(&env);
         Self::load_job(&env, job_id)
     }
 
     pub fn job_count(env: Env) -> u64 {
+        extend_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&soroban_sdk::symbol_short!("count"))
@@ -401,6 +421,7 @@ impl Escrow {
     }
 
     fn load_job(env: &Env, job_id: u64) -> Job {
+        extend_instance_ttl(env);
         let jobs: Map<u64, Job> = env
             .storage()
             .instance()
@@ -427,6 +448,7 @@ impl Escrow {
     }
 
     fn save_job(env: &Env, job_id: u64, job: Job) {
+        extend_instance_ttl(env);
         let mut jobs: Map<u64, Job> = env
             .storage()
             .instance()
