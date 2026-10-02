@@ -543,6 +543,9 @@ jobs:
       - name: Typecheck (app, e2e, and unit configs)
         run: pnpm --filter @stellaragent/dashboard run typecheck
 
+      - name: Lint
+        run: pnpm --filter @stellaragent/dashboard run lint --max-warnings 0
+
       - name: Unit tests
         run: pnpm --filter @stellaragent/dashboard run test:unit
 
