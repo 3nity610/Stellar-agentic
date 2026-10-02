@@ -89,7 +89,7 @@ describe("decodeEvent", () => {
   it.each([
     ["channel", "opened", [1n, "GAGENT", "GOWNER", 100n]],
     ["channel", "topup", [1n, "GOWNER", 50n]],
-    ["channel", "closed", [1n, "GOWNER"]],
+    ["channel", "closed", [1n, "GOWNER", 25n]],
     ["channel", "convpaid", [1n, "GAGENT", "GTO", 10n, "CTOKEN", 9n, Buffer.alloc(0)]],
     ["escrow", "created", [2n, "GREQUESTER", 200n]],
     ["escrow", "accepted", [2n, "GWORKER"]],
@@ -97,6 +97,7 @@ describe("decodeEvent", () => {
     ["escrow", "released", [2n, "GWORKER", 200n]],
     ["escrow", "refunded", [2n, "GREQUESTER", 200n]],
     ["escrow", "disputed", [2n, "GREQUESTER"]],
+    ["escrow", "resolved", [2n, "GARBITER", true]],
     ["rl", "recorded", ["GAGENT", 10n]],
     ["factory", "created", [3n, "GAGENT", "GOWNER"]],
     ["factory", "deactiv", [3n, "GOWNER"]],

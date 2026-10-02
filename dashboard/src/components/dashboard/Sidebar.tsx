@@ -9,19 +9,28 @@ import {
   Settings,
   ExternalLink,
   Zap,
+  BellDot,
+  HeartPulse,
+  FileBarChart,
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { WalletConnection } from './WalletConnection.js';
 
 const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'Overview' },
   { to: '/agents', icon: Bot, label: 'Agents' },
   { to: '/payments', icon: ArrowLeftRight, label: 'Payments' },
+  { to: '/reports', icon: FileBarChart, label: 'Reports' },
   { to: '/jobs', icon: Briefcase, label: 'Escrow Jobs' },
+  { to: '/alerts', icon: BellDot, label: 'Alerts' },
+  { to: '/health', icon: HeartPulse, label: 'Health' },
   { to: '/limits', icon: ShieldCheck, label: 'Rate Limits' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
 export function Sidebar() {
+  const { config } = useDashboard();
+
   return (
     <aside className="w-60 shrink-0 flex flex-col bg-sa-surface border-r border-sa-border h-screen sticky top-0">
       {/* Logo */}
@@ -31,7 +40,9 @@ export function Sidebar() {
         </div>
         <div>
           <p className="font-display font-semibold text-sm text-sa-text">StellarAgent</p>
-          <p className="text-[10px] text-sa-text-dim font-mono">v0.1.0 · testnet</p>
+          <p className="text-[10px] text-sa-text-dim font-mono">
+            v0.1.0 · {config.mode === 'mock' ? 'demo' : config.network}
+          </p>
         </div>
       </div>
 
@@ -73,6 +84,11 @@ export function Sidebar() {
           ))}
         </ul>
       </nav>
+
+      {/* Wallet Connection */}
+      <div className="p-4 border-t border-sa-border">
+        <WalletConnection />
+      </div>
 
       {/* Footer */}
       <div className="p-4 border-t border-sa-border space-y-2">

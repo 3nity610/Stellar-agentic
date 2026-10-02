@@ -13,11 +13,26 @@ function positiveInteger(value: string | undefined, name: string, fallback?: num
   return parsed;
 }
 
+function booleanValue(value: string | undefined, name: string, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (["1", "true", "yes"].includes(value.toLowerCase())) return true;
+  if (["0", "false", "no"].includes(value.toLowerCase())) return false;
+  throw new Error(`${name} must be true or false`);
+}
+
 export interface EnvironmentConfig {
   rpcUrl: string;
   databasePath: string;
+  reportDatabasePath: string;
+  corsOrigin: string;
+  reportWorkerEnabled: boolean;
+  reportPollIntervalMs: number;
+  reportEmailGatewayUrl?: string;
+  reportEmailGatewayToken?: string;
   contracts: ContractAddresses;
   startLedger: number;
+  /** Optional historical starting ledger for backfill; falls back to startLedger. */
+  fromLedger?: number;
   rollbackWindow: number;
   finalityLag: number;
   pollIntervalMs: number;
@@ -43,11 +58,37 @@ export function loadEnvironment(env = process.env): EnvironmentConfig {
   }
   if (!env.SOROBAN_RPC_URL) throw new Error("missing SOROBAN_RPC_URL");
 
+  const databasePath = env.INDEXER_DATABASE ?? "stellaragent-events.sqlite";
+  const reportPollIntervalMs = positiveInteger(
+    env.REPORT_POLL_INTERVAL_MS,
+    "REPORT_POLL_INTERVAL_MS",
+    5_000,
+  );
+  if (reportPollIntervalMs === 0) {
+    throw new Error("REPORT_POLL_INTERVAL_MS must be greater than zero");
+  }
   return {
     rpcUrl: env.SOROBAN_RPC_URL,
-    databasePath: env.INDEXER_DATABASE ?? "stellaragent-events.sqlite",
+    databasePath,
+    reportDatabasePath: env.REPORT_DATABASE ?? `${databasePath}.reports`,
+    corsOrigin: env.AUDIT_API_CORS_ORIGIN ?? "*",
+    reportWorkerEnabled: booleanValue(
+      env.REPORT_WORKER_ENABLED,
+      "REPORT_WORKER_ENABLED",
+      true,
+    ),
+    reportPollIntervalMs,
+    ...(env.REPORT_EMAIL_GATEWAY_URL
+      ? { reportEmailGatewayUrl: env.REPORT_EMAIL_GATEWAY_URL }
+      : {}),
+    ...(env.REPORT_EMAIL_GATEWAY_TOKEN
+      ? { reportEmailGatewayToken: env.REPORT_EMAIL_GATEWAY_TOKEN }
+      : {}),
     contracts: contracts as ContractAddresses,
     startLedger: positiveInteger(env.INDEXER_START_LEDGER, "INDEXER_START_LEDGER"),
+    ...(env.INDEXER_FROM_LEDGER
+      ? { fromLedger: positiveInteger(env.INDEXER_FROM_LEDGER, "INDEXER_FROM_LEDGER") }
+      : {}),
     rollbackWindow: positiveInteger(env.INDEXER_ROLLBACK_WINDOW, "INDEXER_ROLLBACK_WINDOW", 12),
     finalityLag: positiveInteger(env.INDEXER_FINALITY_LAG, "INDEXER_FINALITY_LAG", 1),
     pollIntervalMs: positiveInteger(env.INDEXER_POLL_INTERVAL_MS, "INDEXER_POLL_INTERVAL_MS", 5_000),

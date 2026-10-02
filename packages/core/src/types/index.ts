@@ -95,6 +95,87 @@ export interface StellarAgentConfig {
    * @default false
    */
   allowUnconfiguredContracts?: boolean;
+  /**
+   * OpenTelemetry tracing, metrics, and logging. When omitted or
+   * `{ enabled: false }`, telemetry is a no-op with zero overhead.
+   */
+  telemetry?: {
+    enabled?: boolean;
+    serviceName?: string;
+    otlpEndpoint?: string;
+    logLevel?: 'debug' | 'info' | 'warn' | 'error';
+    /** Test-only injection — not for production use. */
+    tracer?: import('../telemetry/tracer.js').Tracer;
+    metrics?: import('../telemetry/metrics.js').Metrics;
+  };
+  /**
+   * Fleet transaction source accounts. Each mutation exclusively leases one,
+   * removing sequence-number contention from the agent authorization account.
+   * `channelAccountPool` is retained as a descriptive alias.
+   */
+  channelPool?: import('../fleet/channelPool.js').ChannelAccountPool;
+  channelAccountPool?: import('../fleet/channelPool.js').ChannelAccountPool;
+  /** Dynamic transaction fee policy. Recent p90 network fees are used by default. */
+  feeStrategy?:
+    | import('../fleet/feeStrategy.js').FeeStrategy
+    | import('../fleet/feeStrategy.js').FeeCallback
+    | string
+    | number
+    | bigint;
+  /** Fee-bump behavior for congestion and zero-XLM transaction sources. */
+  feeBump?: FeeBumpConfig;
+  /** Creates the agent's account with a sponsored reserve in `createAgentWallet()`. */
+  sponsorService?: import('../fleet/sponsorship.js').SponsorService;
+  /** An existing queue, useful when several agents share one fleet-wide bound. */
+  submissionQueue?: import('../fleet/submissionQueue.js').SubmissionQueue;
+  /** Build a queue owned by this agent. Omitted fields use fleet-safe defaults. */
+  submission?: SubmissionPipelineConfig;
+  /** Multi-venue discovery and deterministic route-selection configuration. */
+  routing?: import('../routing/planner.js').RoutePlannerOptions;
+}
+
+export interface QuoteParams {
+  sourceAsset: string;
+  destinationAsset: string;
+  /** Decimal display amount; converted to 7-decimal base units before discovery. */
+  amount: string;
+  allowedIntermediates?: string[];
+  /** 0..500 basis points. @default 100 */
+  slippageToleranceBps?: number;
+}
+
+export interface FeeBumpConfig {
+  /** @default true */
+  enabled?: boolean;
+  /** `always` is required when the inner source has zero XLM. @default on_expiry */
+  mode?: 'on_expiry' | 'always';
+  /** Outer fee source. Defaults to the sponsor, channel, or agent signer in that order. */
+  signer?: import('../signer.js').Signer;
+  /** A distinct policy for bumps. Defaults to 10x the initial fee or recent fees, whichever is higher. */
+  strategy?:
+    | import('../fleet/feeStrategy.js').FeeStrategy
+    | import('../fleet/feeStrategy.js').FeeCallback
+    | string
+    | number
+    | bigint;
+  /** Poll attempts before a pending inner transaction is bumped. @default 3 */
+  triggerAfterAttempts?: number;
+  /** Remaining transaction lifetime that triggers a bump. @default 10 */
+  expiryThresholdSeconds?: number;
+  /** Maximum replacement envelopes for one invocation. @default 1 */
+  maxBumps?: number;
+}
+
+export interface SubmissionPipelineConfig {
+  concurrency?: number;
+  maxQueueSize?: number;
+  maxAttempts?: number;
+  retryDelayMs?: number;
+  classifyError?: import('../fleet/submissionQueue.js').RetryClassifier;
+  /** Eager sponsored channel count when `sponsorService` creates the pool. @default 1 */
+  minChannels?: number;
+  /** Demand-driven sponsored channel limit. @default concurrency */
+  maxChannels?: number;
 }
 
 export interface AgentInfo {
@@ -133,6 +214,8 @@ export interface PayForAPIParams {
   amount: string;
   /** Asset to pay with (must match the channel's settlement asset) */
   asset?: string;
+  /** Explicit source asset; `asset` remains a backwards-compatible alias. */
+  sourceAsset?: string;
   /** Channel ID to use (uses default if not specified) */
   channelId?: bigint;
   /**
@@ -142,24 +225,51 @@ export interface PayForAPIParams {
   recipient?: string;
   /**
    * Asset the recipient should actually receive, if different from the
-   * channel's settlement asset (`asset`) — e.g. a channel funded in USDC
-   * paying a provider that only accepts XLM. When set, this routes through
-   * `PaymentChannel.pay_with_conversion` instead of `pay`, converting via
-   * the channel contract's configured price oracle + AMM. The spend limit
-   * is still enforced in the channel's settlement asset regardless of
-   * `destAsset`. Requires `minReceived` to also be set.
+   * channel's settlement asset (`asset`) — e.g. a channel funded in XLM
+   * paying a provider that only accepts USDC. With `StellarAgentConfig.routing`
+   * configured, the SDK discovers and deterministically selects an AMM,
+   * Stellar path-payment adapter, or bounded multi-hop route. Without routing
+   * configuration, the legacy single-AMM `pay_with_conversion` path remains
+   * available and requires `minReceived`. Spend limits always remain in the
+   * channel's settlement asset.
    */
   destAsset?: string;
+  /** Recipient asset; `destAsset` remains a backwards-compatible alias. */
+  recipientAsset?: string;
   /**
    * Minimum amount of `destAsset` the recipient must receive (slippage
-   * floor), as a string in `destAsset` units. Required when `destAsset` is
-   * set. The contract additionally enforces its own oracle-derived
-   * fairness bound on top of this — see
-   * `contracts/payment_channel/src/lib.rs`'s `pay_with_conversion` for the
-   * full slippage/price-oracle design.
+   * floor), as a decimal string in `destAsset` units. Automatic routing
+   * derives this from `slippageToleranceBps`; when both are supplied the
+   * stricter floor wins. It is required only for the legacy single-AMM path.
+   * The contract additionally enforces its oracle-derived end-to-end floor.
    */
   minReceived?: string;
+  /**
+   * Reuse a prior `quote()` result or override automatic selection with a
+   * normalized route. Policy, intent, amount, and expiry remain enforced.
+   */
+  route?: import('../routing/planner.js').PaymentQuote | import('../routing/types.js').RouteQuote;
+  /** Intermediate assets automatic discovery may traverse. */
+  allowedIntermediates?: string[];
+  /** Automatic-quote slippage tolerance in basis points, capped at 500. */
+  slippageToleranceBps?: number;
 }
+
+export interface PredictPaymentParams {
+  /** Proposed payment amount, as a decimal string. */
+  amount: string;
+  /**
+   * Channel to evaluate against. Defaults to the agent's active channel if open.
+   * Pass `null` to explicitly skip channel evaluation even when an active channel exists.
+   */
+  channelId?: bigint | null;
+  /**
+   * Stellar address of the agent to check rate limits for.
+   * Defaults to this agent's address.
+   */
+  agentAddress?: string;
+}
+
 
 export interface ChannelInfo {
   id: bigint;
@@ -296,6 +406,22 @@ export interface TxResult {
   success: boolean;
   /** Ledger number it was confirmed in */
   ledger?: number;
+  /** Fee charged by the confirmed transaction result, in stroops. */
+  feePaid?: string;
+  /** Whether confirmation came through a fee-bump envelope. */
+  feeBumped?: boolean;
+  /** Inner transaction source (the leased channel account when pooling is enabled). */
+  sourceAccount?: string;
+  /** Outer fee source when different from `sourceAccount`. */
+  feeSource?: string;
+  /** Number of envelopes accepted for this operation, including a replacement. */
+  submissionAttempts?: number;
+  /** Deterministic route executed for a converted payment. */
+  route?: import('../routing/types.js').RouteQuote;
+  /** Quoted destination amount in integer base units. */
+  expectedDestinationAmount?: string;
+  /** End-to-end contract floor in destination base units. */
+  minimumDestinationAmount?: string;
 }
 
 // ─── Multi-Sig ────────────────────────────────────────────────────────────────

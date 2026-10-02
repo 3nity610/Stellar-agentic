@@ -1,6 +1,9 @@
 import { SorobanRpc } from "@stellar/stellar-sdk";
 import { decodeEvent } from "./decoder.js";
+import { IndexerProgressReporter } from "./progress.js";
 import { EventStore } from "./store.js";
+import { createIndexerTelemetry, instrumentIndexRun, instrumentDecodedEvent } from "./telemetry.js";
+import type { IndexerTelemetry } from "./telemetry.js";
 import type {
   ContractAddresses,
   ContractKind,
@@ -20,6 +23,16 @@ export interface IndexerOptions {
   pageSize?: number;
   pollIntervalMs?: number;
   allowHttp?: boolean;
+  /** Enable tracing and metrics for the ingest pipeline. */
+  telemetry?: boolean | { otlpEndpoint?: string; serviceName?: string };
+  /**
+   * Progress sink published by `/health` and `/metrics`. Supply one to make
+   * lag, throughput, decode failures, and the last error scrapable; when
+   * omitted the query API still reports checkpoint-derived state but has no
+   * lag to report. An indexer always owns a reporter, so passing the default
+   * one back to `createQueryServer` is always possible.
+   */
+  progress?: IndexerProgressReporter;
 }
 
 export interface IndexResult {
@@ -37,6 +50,8 @@ export class SorobanEventIndexer {
   private readonly finalityLag: number;
   private readonly pageSize: number;
   private readonly pollIntervalMs: number;
+  private readonly telemetry: IndexerTelemetry;
+  private readonly progress: IndexerProgressReporter;
   private stopped = false;
 
   constructor(options: IndexerOptions) {
@@ -58,13 +73,58 @@ export class SorobanEventIndexer {
     this.finalityLag = options.finalityLag ?? 1;
     this.pageSize = options.pageSize ?? 100;
     this.pollIntervalMs = options.pollIntervalMs ?? 5_000;
+    const tel = options.telemetry;
+    this.telemetry = createIndexerTelemetry(
+      typeof tel === "object" ? { enabled: true, ...tel } : { enabled: tel ?? false },
+    );
+    this.progress = options.progress ?? new IndexerProgressReporter({
+      rollbackWindow: this.rollbackWindow,
+      finalityLag: this.finalityLag,
+    });
+  }
+
+  /** Progress this indexer publishes to the query API's `/health` and `/metrics`. */
+  get progressReporter(): IndexerProgressReporter {
+    return this.progress;
   }
 
   async catchUp(fromLedger?: number): Promise<IndexResult> {
-    return this.runOnce(fromLedger);
+    const result = await instrumentIndexRun(this.telemetry, () =>
+      this.runOnceInternal(fromLedger),
+    );
+    return {
+      fromLedger: result.fromLedger,
+      throughLedger: result.throughLedger,
+      eventCount: result.eventCount,
+    };
   }
 
   async runOnce(fromLedgerOverride?: number): Promise<IndexResult> {
+    const result = await this.runOnceInternal(fromLedgerOverride);
+    return {
+      fromLedger: result.fromLedger,
+      throughLedger: result.throughLedger,
+      eventCount: result.eventCount,
+    };
+  }
+
+  private async runOnceInternal(fromLedgerOverride?: number): Promise<
+    IndexResult & { decodeFailures: number; latestLedger: number }
+  > {
+    const startedAt = Date.now();
+    try {
+      const report = await this.fetchAndCommit(fromLedgerOverride);
+      this.progress.recordRun(report, Date.now() - startedAt);
+      return report;
+    } catch (error) {
+      this.progress.recordFailure(error);
+      throw error;
+    }
+  }
+
+  private async fetchAndCommit(fromLedgerOverride?: number): Promise<
+    IndexResult & { decodeFailures: number; latestLedger: number }
+  > {
     if (
       fromLedgerOverride !== undefined &&
       (!Number.isSafeInteger(fromLedgerOverride) || fromLedgerOverride < 1)
@@ -103,12 +163,35 @@ export class SorobanEventIndexer {
           : undefined;
     } while (cursor);
 
+    // Published as soon as the head is known, so a run that fails while
+    // decoding still leaves the lag behind it visible on /health and /metrics.
+    this.progress.recordLatestLedger(latestLedger);
+
     const throughLedger = Math.max(fromLedger - 1, latestLedger - this.finalityLag);
+    let decodeFailures = 0;
     const decoded = rawEvents
       .filter((event) => event.ledger <= throughLedger)
-      .map((event) => this.decode(event));
+      .map((event) => {
+        try {
+          return instrumentDecodedEvent(this.telemetry, this.decode(event));
+        } catch (error) {
+          decodeFailures += 1;
+          this.telemetry.logger.warn("decode failure", {
+            eventId: event.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        }
+      })
+      .filter((event): event is DecodedEvent => event !== null);
     this.store.replaceRange(fromLedger, throughLedger, decoded);
-    return { fromLedger, throughLedger, eventCount: decoded.length };
+    return {
+      fromLedger,
+      throughLedger,
+      eventCount: decoded.length,
+      decodeFailures,
+      latestLedger,
+    };
   }
 
   async liveTail(signal?: AbortSignal): Promise<void> {

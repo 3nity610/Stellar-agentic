@@ -1,9 +1,15 @@
 extern crate std;
 
-use crate::{PaymentChannel, PaymentChannelClient, SpendPeriod, MAX_SLIPPAGE_BPS, PRICE_SCALE};
+use crate::{
+    PaymentChannel, PaymentChannelClient, SpendPeriod, SwapHop, MAX_ROUTE_HOPS, MAX_SLIPPAGE_BPS,
+    PRICE_SCALE,
+};
 use amm_swap::{AmmSwap, AmmSwapClient, RATE_SCALE};
 use price_oracle::{PriceOracle, PriceOracleClient};
-use soroban_sdk::{testutils::Address as _, token, Address, Bytes, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    token, Address, Bytes, Env, Vec,
+};
 
 /// `settlement_token` stands in for the channel's funding asset (e.g.
 /// USDC); `dest_token` stands in for a recipient's preferred asset (e.g.
@@ -18,6 +24,7 @@ struct Harness<'a> {
     owner: Address,
     agent: Address,
     settlement_token: Address,
+    intermediate_token: Address,
     dest_token: Address,
 }
 
@@ -38,6 +45,10 @@ fn setup() -> Harness<'static> {
 
     let dest_admin = Address::generate(&env);
     let dest_token = env.register_stellar_asset_contract_v2(dest_admin).address();
+    let intermediate_admin = Address::generate(&env);
+    let intermediate_token = env
+        .register_stellar_asset_contract_v2(intermediate_admin)
+        .address();
 
     let channel_id = env.register(PaymentChannel, ());
     let channel = PaymentChannelClient::new(&env, &channel_id);
@@ -63,8 +74,22 @@ fn setup() -> Harness<'static> {
         &dest_token,
         &(RATE * RATE_SCALE),
     );
+    amm.set_rate(
+        &amm_admin,
+        &settlement_token,
+        &intermediate_token,
+        &(2 * RATE_SCALE),
+    );
+    amm.set_rate(
+        &amm_admin,
+        &intermediate_token,
+        &dest_token,
+        &(3 * RATE_SCALE),
+    );
     token::StellarAssetClient::new(&env, &dest_token).mint(&amm_admin, &1_000_000_000);
+    token::StellarAssetClient::new(&env, &intermediate_token).mint(&amm_admin, &1_000_000_000);
     amm.fund(&amm_admin, &dest_token, &1_000_000_000);
+    amm.fund(&amm_admin, &intermediate_token, &1_000_000_000);
 
     channel.set_price_oracle(&oracle_admin, &oracle_id);
     channel.set_amm(&amm_admin, &amm_id);
@@ -77,6 +102,7 @@ fn setup() -> Harness<'static> {
         owner,
         agent,
         settlement_token,
+        intermediate_token,
         dest_token,
     }
 }
@@ -94,6 +120,26 @@ fn open_channel(h: &Harness, deposit: i128, limit: i128) -> u64 {
 
 fn memo(env: &Env) -> Bytes {
     Bytes::new(env)
+}
+
+fn two_hop_route(h: &Harness) -> Vec<SwapHop> {
+    Vec::from_array(
+        &h.env,
+        [
+            SwapHop {
+                venue: h.amm.address.clone(),
+                from_token: h.settlement_token.clone(),
+                to_token: h.intermediate_token.clone(),
+                min_out: 1_900,
+            },
+            SwapHop {
+                venue: h.amm.address.clone(),
+                from_token: h.intermediate_token.clone(),
+                to_token: h.dest_token.clone(),
+                min_out: 5_700,
+            },
+        ],
+    )
 }
 
 // ── Baseline: existing `pay()` behavior is untouched ───────────────────────
@@ -360,6 +406,279 @@ fn spend_limit_enforced_in_normalized_terms_across_same_and_cross_asset_payments
     let info = h.channel.get_channel(&channel_id);
     assert_eq!(info.spent_this_period, 10_000);
     assert_eq!(h.channel.remaining_this_period(&channel_id), 0);
+}
+
+// ── Explicit bounded route execution ───────────────────────────────────────
+
+#[test]
+fn two_hop_route_completes_with_one_end_to_end_bound() {
+    let h = setup();
+    let channel_id = open_channel(&h, 1_000_000, 500_000);
+    let recipient = Address::generate(&h.env);
+
+    // 1,000 settlement -> 2,000 intermediate -> 6,000 destination.
+    // The independent source/destination oracle quotes 5,000, so a 4,750
+    // end-to-end floor clears the contract's maximum-slippage rule.
+    let received = h.channel.pay_with_route(
+        &h.agent,
+        &channel_id,
+        &recipient,
+        &1_000,
+        &h.dest_token,
+        &two_hop_route(&h),
+        &4_750,
+        &100,
+        &memo(&h.env),
+    );
+
+    assert_eq!(received, 6_000);
+    assert_eq!(
+        token::Client::new(&h.env, &h.dest_token).balance(&recipient),
+        6_000
+    );
+    assert_eq!(
+        token::Client::new(&h.env, &h.intermediate_token).balance(&h.channel.address),
+        0
+    );
+    let channel = h.channel.get_channel(&channel_id);
+    assert_eq!(channel.spent_this_period, 1_000);
+    assert_eq!(channel.total_spent, 1_000);
+    assert_eq!(channel.collateral, 999_000);
+}
+
+#[test]
+fn failed_middle_hop_reverts_every_transfer_and_counter() {
+    let h = setup();
+    let channel_id = open_channel(&h, 1_000_000, 500_000);
+    let recipient = Address::generate(&h.env);
+    let bad_admin = Address::generate(&h.env);
+    let bad_id = h.env.register(AmmSwap, ());
+    let bad_amm = AmmSwapClient::new(&h.env, &bad_id);
+    bad_amm.initialize(&bad_admin);
+
+    let route = Vec::from_array(
+        &h.env,
+        [
+            SwapHop {
+                venue: h.amm.address.clone(),
+                from_token: h.settlement_token.clone(),
+                to_token: h.intermediate_token.clone(),
+                min_out: 1_900,
+            },
+            // Deliberately has no configured intermediate/destination rate.
+            SwapHop {
+                venue: bad_id.clone(),
+                from_token: h.intermediate_token.clone(),
+                to_token: h.dest_token.clone(),
+                min_out: 4_750,
+            },
+        ],
+    );
+
+    let before = h.channel.get_channel(&channel_id);
+    let settlement = token::Client::new(&h.env, &h.settlement_token);
+    let intermediate = token::Client::new(&h.env, &h.intermediate_token);
+    let destination = token::Client::new(&h.env, &h.dest_token);
+    let balances = (
+        settlement.balance(&h.channel.address),
+        settlement.balance(&h.amm.address),
+        intermediate.balance(&h.channel.address),
+        intermediate.balance(&h.amm.address),
+        intermediate.balance(&bad_id),
+        destination.balance(&recipient),
+    );
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        h.channel.pay_with_route(
+            &h.agent,
+            &channel_id,
+            &recipient,
+            &1_000,
+            &h.dest_token,
+            &route,
+            &4_750,
+            &100,
+            &memo(&h.env),
+        );
+    }));
+    assert!(result.is_err());
+
+    let after = h.channel.get_channel(&channel_id);
+    assert_eq!(after.spent_this_period, before.spent_this_period);
+    assert_eq!(after.total_spent, before.total_spent);
+    assert_eq!(after.collateral, before.collateral);
+    assert_eq!(
+        (
+            settlement.balance(&h.channel.address),
+            settlement.balance(&h.amm.address),
+            intermediate.balance(&h.channel.address),
+            intermediate.balance(&h.amm.address),
+            intermediate.balance(&bad_id),
+            destination.balance(&recipient),
+        ),
+        balances
+    );
+}
+
+#[test]
+fn explicit_same_asset_route_preserves_direct_payment_behavior() {
+    let h = setup();
+    let channel_id = open_channel(&h, 1_000_000, 500_000);
+    let recipient = Address::generate(&h.env);
+    let received = h.channel.pay_with_route(
+        &h.agent,
+        &channel_id,
+        &recipient,
+        &1_000,
+        &h.settlement_token,
+        &Vec::new(&h.env),
+        &1_000,
+        &100,
+        &memo(&h.env),
+    );
+    assert_eq!(received, 1_000);
+    assert_eq!(
+        token::Client::new(&h.env, &h.settlement_token).balance(&recipient),
+        1_000
+    );
+}
+
+#[test]
+#[should_panic(expected = "swap output below min_out")]
+fn final_hop_enforces_the_end_to_end_minimum() {
+    let h = setup();
+    let channel_id = open_channel(&h, 1_000_000, 500_000);
+    let recipient = Address::generate(&h.env);
+    h.channel.pay_with_route(
+        &h.agent,
+        &channel_id,
+        &recipient,
+        &1_000,
+        &h.dest_token,
+        &two_hop_route(&h),
+        &6_001,
+        &100,
+        &memo(&h.env),
+    );
+}
+
+#[test]
+#[should_panic(expected = "route quote expired")]
+fn expired_route_is_rejected_before_execution() {
+    let h = setup();
+    h.env
+        .ledger()
+        .with_mut(|ledger| ledger.sequence_number = 50);
+    let channel_id = open_channel(&h, 1_000_000, 500_000);
+    h.channel.pay_with_route(
+        &h.agent,
+        &channel_id,
+        &Address::generate(&h.env),
+        &1_000,
+        &h.dest_token,
+        &two_hop_route(&h),
+        &4_750,
+        &49,
+        &memo(&h.env),
+    );
+}
+
+#[test]
+#[should_panic(expected = "route exceeds maximum hop count")]
+fn route_depth_is_bounded() {
+    let h = setup();
+    let channel_id = open_channel(&h, 1_000_000, 500_000);
+    let hop = SwapHop {
+        venue: h.amm.address.clone(),
+        from_token: h.settlement_token.clone(),
+        to_token: h.intermediate_token.clone(),
+        min_out: 0,
+    };
+    let route = Vec::from_array(
+        &h.env,
+        [hop.clone(), hop.clone(), hop.clone(), hop.clone(), hop],
+    );
+    assert_eq!(route.len(), MAX_ROUTE_HOPS + 1);
+    h.channel.pay_with_route(
+        &h.agent,
+        &channel_id,
+        &Address::generate(&h.env),
+        &1_000,
+        &h.dest_token,
+        &route,
+        &4_750,
+        &100,
+        &memo(&h.env),
+    );
+}
+
+#[test]
+#[should_panic(expected = "route asset discontinuity")]
+fn discontinuous_route_is_rejected() {
+    let h = setup();
+    let channel_id = open_channel(&h, 1_000_000, 500_000);
+    let mut route = two_hop_route(&h);
+    route.set(
+        1,
+        SwapHop {
+            venue: h.amm.address.clone(),
+            from_token: h.settlement_token.clone(),
+            to_token: h.dest_token.clone(),
+            min_out: 4_750,
+        },
+    );
+    h.channel.pay_with_route(
+        &h.agent,
+        &channel_id,
+        &Address::generate(&h.env),
+        &1_000,
+        &h.dest_token,
+        &route,
+        &4_750,
+        &100,
+        &memo(&h.env),
+    );
+}
+
+#[test]
+#[should_panic(expected = "route contains an asset cycle")]
+fn cyclic_route_is_rejected() {
+    let h = setup();
+    let channel_id = open_channel(&h, 1_000_000, 500_000);
+    let route = Vec::from_array(
+        &h.env,
+        [
+            SwapHop {
+                venue: h.amm.address.clone(),
+                from_token: h.settlement_token.clone(),
+                to_token: h.intermediate_token.clone(),
+                min_out: 0,
+            },
+            SwapHop {
+                venue: h.amm.address.clone(),
+                from_token: h.intermediate_token.clone(),
+                to_token: h.settlement_token.clone(),
+                min_out: 0,
+            },
+            SwapHop {
+                venue: h.amm.address.clone(),
+                from_token: h.settlement_token.clone(),
+                to_token: h.dest_token.clone(),
+                min_out: 0,
+            },
+        ],
+    );
+    h.channel.pay_with_route(
+        &h.agent,
+        &channel_id,
+        &Address::generate(&h.env),
+        &1_000,
+        &h.dest_token,
+        &route,
+        &4_750,
+        &100,
+        &memo(&h.env),
+    );
 }
 
 // ── Admin gating on the new wiring endpoints ────────────────────────────────

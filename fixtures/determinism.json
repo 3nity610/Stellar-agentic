@@ -10731,5 +10731,1637 @@
         }
       }
     ]
+  },
+  "routing": {
+    "policies": {
+      "default": {
+        "costWeight": 5000,
+        "slippageWeight": 3000,
+        "reliabilityWeight": 2000,
+        "hopPenalty": 5,
+        "maxSlippageBps": 1000,
+        "minReliabilityBps": 5000
+      },
+      "costOnly": {
+        "costWeight": 10000,
+        "slippageWeight": 0,
+        "reliabilityWeight": 0,
+        "hopPenalty": 0,
+        "maxSlippageBps": 1000,
+        "minReliabilityBps": 5000
+      },
+      "reliabilityHeavy": {
+        "costWeight": 1000,
+        "slippageWeight": 1000,
+        "reliabilityWeight": 8000,
+        "hopPenalty": 11,
+        "maxSlippageBps": 1000,
+        "minReliabilityBps": 5000
+      }
+    },
+    "rankRoutes": [
+      {
+        "id": "empty/default",
+        "routes": [],
+        "policy": "default",
+        "expect": []
+      },
+      {
+        "id": "empty/costOnly",
+        "routes": [],
+        "policy": "costOnly",
+        "expect": []
+      },
+      {
+        "id": "empty/reliabilityHeavy",
+        "routes": [],
+        "policy": "reliabilityHeavy",
+        "expect": []
+      },
+      {
+        "id": "obvious/default",
+        "routes": [
+          {
+            "id": "expensive",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 500,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "cheap",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 1,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "reliable",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 50,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 10000,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "default",
+        "expect": [
+          {
+            "id": "reliable",
+            "score": "31",
+            "breakdown": {
+              "weightedCost": "25",
+              "weightedSlippage": "6",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "cheap",
+            "score": "106",
+            "breakdown": {
+              "weightedCost": "0",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "expensive",
+            "score": "356",
+            "breakdown": {
+              "weightedCost": "250",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "obvious/costOnly",
+        "routes": [
+          {
+            "id": "expensive",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 500,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "cheap",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 1,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "reliable",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 50,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 10000,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "costOnly",
+        "expect": [
+          {
+            "id": "cheap",
+            "score": "1",
+            "breakdown": {
+              "weightedCost": "1",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "reliable",
+            "score": "50",
+            "breakdown": {
+              "weightedCost": "50",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "expensive",
+            "score": "500",
+            "breakdown": {
+              "weightedCost": "500",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "obvious/reliabilityHeavy",
+        "routes": [
+          {
+            "id": "expensive",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 500,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "cheap",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 1,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "reliable",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 50,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 10000,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "reliabilityHeavy",
+        "expect": [
+          {
+            "id": "reliable",
+            "score": "7",
+            "breakdown": {
+              "weightedCost": "5",
+              "weightedSlippage": "2",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "cheap",
+            "score": "402",
+            "breakdown": {
+              "weightedCost": "0",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "expensive",
+            "score": "452",
+            "breakdown": {
+              "weightedCost": "50",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "allTies/default",
+        "routes": [
+          {
+            "id": "z-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "A-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "a-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "M-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "default",
+        "expect": [
+          {
+            "id": "A-route",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "M-route",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "a-route",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "z-route",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "allTies/costOnly",
+        "routes": [
+          {
+            "id": "z-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "A-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "a-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "M-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "costOnly",
+        "expect": [
+          {
+            "id": "A-route",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "M-route",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "a-route",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "z-route",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "allTies/reliabilityHeavy",
+        "routes": [
+          {
+            "id": "z-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "A-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "a-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "M-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "reliabilityHeavy",
+        "expect": [
+          {
+            "id": "A-route",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "M-route",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "a-route",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "z-route",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "unicodeTies/default",
+        "routes": [
+          {
+            "id": "𐀀-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "default",
+        "expect": [
+          {
+            "id": "-route",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "𐀀-route",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "unicodeTies/costOnly",
+        "routes": [
+          {
+            "id": "𐀀-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "costOnly",
+        "expect": [
+          {
+            "id": "-route",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "𐀀-route",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "unicodeTies/reliabilityHeavy",
+        "routes": [
+          {
+            "id": "𐀀-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "-route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "reliabilityHeavy",
+        "expect": [
+          {
+            "id": "-route",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "𐀀-route",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "prefixTies/default",
+        "routes": [
+          {
+            "id": "route/long",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "default",
+        "expect": [
+          {
+            "id": "route",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "route/long",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "prefixTies/costOnly",
+        "routes": [
+          {
+            "id": "route/long",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "costOnly",
+        "expect": [
+          {
+            "id": "route",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "route/long",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "prefixTies/reliabilityHeavy",
+        "routes": [
+          {
+            "id": "route/long",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "route",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "reliabilityHeavy",
+        "expect": [
+          {
+            "id": "route",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "route/long",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "tieBreaks/default",
+        "routes": [
+          {
+            "id": "low-output",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "19999999",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "high-output",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000001",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "slippery",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 21,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "two-hop",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 2,
+            "hops": []
+          }
+        ],
+        "policy": "default",
+        "expect": [
+          {
+            "id": "high-output",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "slippery",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "low-output",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "two-hop",
+            "score": "126",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "5"
+            }
+          }
+        ]
+      },
+      {
+        "id": "tieBreaks/costOnly",
+        "routes": [
+          {
+            "id": "low-output",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "19999999",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "high-output",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000001",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "slippery",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 21,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "two-hop",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 2,
+            "hops": []
+          }
+        ],
+        "policy": "costOnly",
+        "expect": [
+          {
+            "id": "high-output",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "two-hop",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "slippery",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "low-output",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "tieBreaks/reliabilityHeavy",
+        "routes": [
+          {
+            "id": "low-output",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "19999999",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "high-output",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000001",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "slippery",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 21,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "two-hop",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 2,
+            "hops": []
+          }
+        ],
+        "policy": "reliabilityHeavy",
+        "expect": [
+          {
+            "id": "high-output",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "slippery",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "low-output",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "two-hop",
+            "score": "416",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "11"
+            }
+          }
+        ]
+      },
+      {
+        "id": "filtered/default",
+        "routes": [
+          {
+            "id": "valid",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "too-slippery",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 1001,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "too-unreliable",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 4999,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "default",
+        "expect": [
+          {
+            "id": "valid",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "filtered/costOnly",
+        "routes": [
+          {
+            "id": "valid",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "too-slippery",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 1001,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "too-unreliable",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 4999,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "costOnly",
+        "expect": [
+          {
+            "id": "valid",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "filtered/reliabilityHeavy",
+        "routes": [
+          {
+            "id": "valid",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "too-slippery",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 1001,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "too-unreliable",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 4999,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "reliabilityHeavy",
+        "expect": [
+          {
+            "id": "valid",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "rounding/default",
+        "routes": [
+          {
+            "id": "one",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 1,
+            "expectedSlippageBps": 1,
+            "reliabilityBps": 9999,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "two",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 2,
+            "expectedSlippageBps": 2,
+            "reliabilityBps": 9998,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "default",
+        "expect": [
+          {
+            "id": "one",
+            "score": "0",
+            "breakdown": {
+              "weightedCost": "0",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "two",
+            "score": "1",
+            "breakdown": {
+              "weightedCost": "1",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "rounding/costOnly",
+        "routes": [
+          {
+            "id": "one",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 1,
+            "expectedSlippageBps": 1,
+            "reliabilityBps": 9999,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "two",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 2,
+            "expectedSlippageBps": 2,
+            "reliabilityBps": 9998,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "costOnly",
+        "expect": [
+          {
+            "id": "one",
+            "score": "1",
+            "breakdown": {
+              "weightedCost": "1",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "two",
+            "score": "2",
+            "breakdown": {
+              "weightedCost": "2",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "rounding/reliabilityHeavy",
+        "routes": [
+          {
+            "id": "one",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 1,
+            "expectedSlippageBps": 1,
+            "reliabilityBps": 9999,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "two",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "20000000",
+            "totalFeeBps": 2,
+            "expectedSlippageBps": 2,
+            "reliabilityBps": 9998,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "reliabilityHeavy",
+        "expect": [
+          {
+            "id": "one",
+            "score": "0",
+            "breakdown": {
+              "weightedCost": "0",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "two",
+            "score": "1",
+            "breakdown": {
+              "weightedCost": "0",
+              "weightedSlippage": "0",
+              "weightedReliability": "1",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "huge/default",
+        "routes": [
+          {
+            "id": "max",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "170141183460469231731687303715884105727",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "max-minus-one",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "170141183460469231731687303715884105726",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "default",
+        "expect": [
+          {
+            "id": "max",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "max-minus-one",
+            "score": "121",
+            "breakdown": {
+              "weightedCost": "15",
+              "weightedSlippage": "6",
+              "weightedReliability": "100",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "huge/costOnly",
+        "routes": [
+          {
+            "id": "max",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "170141183460469231731687303715884105727",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "max-minus-one",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "170141183460469231731687303715884105726",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "costOnly",
+        "expect": [
+          {
+            "id": "max",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "max-minus-one",
+            "score": "30",
+            "breakdown": {
+              "weightedCost": "30",
+              "weightedSlippage": "0",
+              "weightedReliability": "0",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      },
+      {
+        "id": "huge/reliabilityHeavy",
+        "routes": [
+          {
+            "id": "max",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "170141183460469231731687303715884105727",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          },
+          {
+            "id": "max-minus-one",
+            "sourceAsset": "XLM",
+            "destinationAsset": "USDC",
+            "sourceAmount": "100000000",
+            "expectedDestinationAmount": "170141183460469231731687303715884105726",
+            "totalFeeBps": 30,
+            "expectedSlippageBps": 20,
+            "reliabilityBps": 9500,
+            "hopCount": 1,
+            "hops": []
+          }
+        ],
+        "policy": "reliabilityHeavy",
+        "expect": [
+          {
+            "id": "max",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          },
+          {
+            "id": "max-minus-one",
+            "score": "405",
+            "breakdown": {
+              "weightedCost": "3",
+              "weightedSlippage": "2",
+              "weightedReliability": "400",
+              "hopPenalty": "0"
+            }
+          }
+        ]
+      }
+    ]
   }
 }

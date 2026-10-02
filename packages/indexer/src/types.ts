@@ -68,6 +68,7 @@ export type DecodedEvent =
       action: "closed";
       channelId: string;
       owner: string;
+      refund: string;
     })
   | (EventMetadata & {
       namespace: "escrow";
@@ -101,6 +102,13 @@ export type DecodedEvent =
       action: "disputed";
       jobId: string;
       requester: string;
+    })
+  | (EventMetadata & {
+      namespace: "escrow";
+      action: "resolved";
+      jobId: string;
+      arbiter: string;
+      favorWorker: boolean;
     })
   | (EventMetadata & {
       namespace: "rl";

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import {
   AreaChart,
@@ -19,17 +20,33 @@ import {
   SectionHeader,
   ProgressBar,
 } from '../components/ui/index.js';
-import { MOCK_AGENTS, MOCK_PAYMENTS, MOCK_SPEND_DATA } from '../lib/mockData.js';
+import { PanelBoundary } from '../components/dashboard/PanelBoundary.js';
+import { useAgentsPanel, usePaymentsPanel } from '../lib/chain/panels.js';
+import { useDashboard } from '../lib/chain/DashboardProvider.js';
 import { sumAmounts, fmt, pctNumber } from '../lib/deterministic-math.js';
+import type { Agent } from '../lib/chain/types.js';
 
 // ─── Custom Tooltip ───────────────────────────────────────────────────────────
 
-function CustomTooltip({ active, payload, label }: any) {
+interface TooltipPayloadEntry {
+  value?: number | string;
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: TooltipPayloadEntry[];
+  label?: ReactNode;
+}
+
+function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
     <div className="card p-3 text-xs shadow-xl">
       <p className="label mb-2">{label}</p>
-      <p className="text-sa-accent font-mono">${payload[0]?.value?.toFixed(3)} spent</p>
+      <p className="text-sa-accent font-mono">
+        ${typeof payload[0]?.value === 'number' ? payload[0].value.toFixed(3) : payload[0]?.value}{' '}
+        spent
+      </p>
       <p className="text-sa-text-dim font-mono">{payload[1]?.value} ops</p>
     </div>
   );
@@ -38,11 +55,23 @@ function CustomTooltip({ active, payload, label }: any) {
 // ─── Overview Page ────────────────────────────────────────────────────────────
 
 export function OverviewPage() {
-  const activeAgents = MOCK_AGENTS.filter((a) => a.status === 'active').length;
-  const warningAgents = MOCK_AGENTS.filter((a) => a.status === 'warning').length;
+  const agentsPanel = useAgentsPanel();
+  const paymentsPanel = usePaymentsPanel();
+  const { config } = useDashboard();
+
+  const agents: Agent[] = agentsPanel.data ?? [];
+  const payments = paymentsPanel.data ?? [];
+  const series = paymentsPanel.series;
+
+  const activeAgents = agents.filter((a) => a.status === 'active').length;
+  const warningAgents = agents.filter((a) => a.status === 'warning').length;
   // Deterministic sum: use bignumber.js so the result is identical on ARM and x86
-  const totalSpentToday = fmt(sumAmounts(MOCK_AGENTS.map((a) => a.spentToday)), 2);
-  const totalOps = MOCK_AGENTS.reduce((sum, a) => sum + a.totalOps, 0).toLocaleString();
+  const totalSpentToday = fmt(sumAmounts(agents.map((a) => a.spentToday)), 2);
+  const totalOps = agents.reduce((sum, a) => sum + a.totalOps, 0).toLocaleString();
+  // The chain has no "operation count" for a period; the payment feed's row
+  // count is the closest real thing, and it is labelled as what it is.
+  const paymentCount = payments.length;
+  const totalOpsKnown = agents.length > 0;
 
   return (
     <div className="flex-1 overflow-auto">
@@ -79,29 +108,29 @@ export function OverviewPage() {
         <div className="grid grid-cols-4 gap-4">
           <StatCard
             label="Active Agents"
-            value={`${activeAgents} / ${MOCK_AGENTS.length}`}
+            value={totalOpsKnown ? `${activeAgents} / ${agents.length}` : '—'}
             sub={warningAgents > 0 ? `${warningAgents} near limit` : 'All healthy'}
             icon={<Bot size={20} />}
             accent
           />
           <StatCard
             label="Spent Today"
-            value={`$${totalSpentToday}`}
-            sub="Across all agents"
+            value={totalOpsKnown ? `$${totalSpentToday}` : '—'}
+            sub="Across all watched agents"
             trend="up"
             trendValue="↑ 12% vs yesterday"
             icon={<DollarSign size={20} />}
           />
           <StatCard
-            label="Total Operations"
-            value={totalOps}
-            sub="Lifetime"
+            label="Payments (24h)"
+            value={paymentsPanel.status === 'ready' ? String(paymentCount) : '—'}
+            sub={totalOpsKnown ? `${totalOps} tx this hour across agents` : 'Awaiting chain data'}
             icon={<Zap size={20} />}
           />
           <StatCard
             label="Network"
-            value="Testnet"
-            sub="2.5s finality · ~$0 fees"
+            value={config.mode === 'mock' ? 'Demo data' : config.network}
+            sub={config.mode === 'mock' ? 'fixtures, not the chain' : '2.5s finality · ~$0 fees'}
             icon={<Activity size={20} />}
           />
         </div>
@@ -110,11 +139,11 @@ export function OverviewPage() {
         <Card>
           <SectionHeader
             title="Spend over 24h"
-            subtitle="All agents combined · USDC"
+            subtitle="All agents combined · bucketed from indexed payments"
           />
-          <div className="h-52">
+          <div className="h-52" aria-busy={paymentsPanel.status === 'loading'}>
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={MOCK_SPEND_DATA} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
+              <AreaChart data={series} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
                 <defs>
                   <linearGradient id="spendGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#00D4FF" stopOpacity={0.3} />
@@ -178,98 +207,121 @@ export function OverviewPage() {
                 <button className="btn-secondary text-xs py-1.5 px-3">View all</button>
               }
             />
-            <div className="space-y-3">
-              {MOCK_AGENTS.map((agent, i) => (
-                <motion.div
-                  key={agent.id}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.06 }}
-                  className="flex items-center gap-3 p-3 rounded-lg hover:bg-sa-bg/60 transition-colors cursor-pointer"
-                >
-                  <StatusDot status={agent.status} pulse={agent.status === 'active'} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-sa-text truncate">{agent.name}</p>
-                      {agent.status === 'warning' && (
-                        <Badge variant="warning">Near limit</Badge>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 mt-1">
-                      <AddressChip address={agent.address} />
-                      <span className="text-xs text-sa-text-dim">{agent.lastActive}</span>
-                    </div>
-                    <div className="mt-2">
-                      <ProgressBar
-                        value={pctNumber(agent.spentToday, agent.limitPerDay)}
-                        max={100}
-                        showPercent
-                        danger={agent.status === 'warning'}
-                      />
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-mono text-sa-text">
-                      ${agent.balance}
-                    </p>
-                    <p className="text-[10px] text-sa-text-dim">{agent.asset}</p>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
+            <PanelBoundary
+              panel={agentsPanel}
+              label="Agents"
+              emptyMessage="No agents in the roster yet. Add one to VITE_STELLARAGENT_AGENTS."
+              failures={agentsPanel.failures}
+            >
+              {(rows) => (
+                <div className="space-y-3">
+                  {rows.map((agent, i) => (
+                    <motion.div
+                      key={agent.id}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.06 }}
+                      className="flex items-center gap-3 p-3 rounded-lg hover:bg-sa-bg/60 transition-colors cursor-pointer"
+                    >
+                      <StatusDot status={agent.status} pulse={agent.status === 'active'} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-sa-text truncate">{agent.name}</p>
+                          {agent.status === 'warning' && (
+                            <Badge variant="warning">Near limit</Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <AddressChip address={agent.address} />
+                          <span className="text-xs text-sa-text-dim">{agent.lastActive}</span>
+                        </div>
+                        <div className="mt-2">
+                          <ProgressBar
+                            value={pctNumber(agent.spentToday, agent.limitPerDay)}
+                            max={100}
+                            showPercent
+                            danger={agent.status === 'warning'}
+                          />
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-mono text-sa-text">
+                          ${agent.balance}
+                        </p>
+                        <p className="text-[10px] text-sa-text-dim">{agent.asset}</p>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </PanelBoundary>
           </Card>
 
           {/* Recent Payments */}
           <Card>
             <SectionHeader
               title="Recent Payments"
-              subtitle="Live feed"
+              subtitle={config.indexerUrl ? 'Live feed' : 'No indexer configured'}
               action={
                 <div className="flex items-center gap-2">
-                  <StatusDot status="active" pulse />
-                  <span className="text-xs text-sa-text-dim">Live</span>
+                  <StatusDot status="active" pulse={paymentsPanel.status === 'ready'} />
+                  <span className="text-xs text-sa-text-dim">
+                    {paymentsPanel.status === 'ready' ? 'Live' : 'Connecting'}
+                  </span>
                 </div>
               }
             />
-            <div className="space-y-2">
-              {MOCK_PAYMENTS.slice(0, 5).map((payment, i) => (
-                <motion.div
-                  key={payment.id}
-                  initial={{ opacity: 0, x: 10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-sa-bg/60 transition-colors"
-                >
-                  <div
-                    className={`w-1.5 h-8 rounded-full shrink-0 ${
-                      payment.status === 'success'
-                        ? 'bg-sa-green'
-                        : payment.status === 'failed'
-                          ? 'bg-sa-red'
-                          : 'bg-sa-yellow'
-                    }`}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-sa-text truncate">
-                      {payment.agentName}
-                    </p>
-                    <p className="text-[10px] text-sa-text-dim font-mono truncate">
-                      {payment.endpoint}
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p
-                      className={`text-sm font-mono font-medium ${
-                        payment.status === 'failed' ? 'text-sa-red line-through' : 'text-sa-text'
-                      }`}
+            <PanelBoundary
+              panel={paymentsPanel}
+              label="Payments"
+              emptyMessage={
+                config.indexerUrl
+                  ? 'No channel payments have been indexed yet.'
+                  : 'Set VITE_STELLARAGENT_INDEXER_URL to show the payment feed.'
+              }
+            >
+              {(rows) => (
+                <div className="space-y-2">
+                  {rows.slice(0, 5).map((payment, i) => (
+                    <motion.div
+                      key={payment.id}
+                      initial={{ opacity: 0, x: 10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.05 }}
+                      className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-sa-bg/60 transition-colors"
                     >
-                      ${payment.amount}
-                    </p>
-                    <p className="text-[10px] text-sa-text-dim">{payment.timestamp}</p>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
+                      <div
+                        className={`w-1.5 h-8 rounded-full shrink-0 ${
+                          payment.status === 'success'
+                            ? 'bg-sa-green'
+                            : payment.status === 'failed'
+                              ? 'bg-sa-red'
+                              : 'bg-sa-yellow'
+                        }`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-sa-text truncate">
+                          {payment.agentName}
+                        </p>
+                        <p className="text-[10px] text-sa-text-dim font-mono truncate">
+                          {payment.endpoint}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p
+                          className={`text-sm font-mono font-medium ${
+                            payment.status === 'failed' ? 'text-sa-red line-through' : 'text-sa-text'
+                          }`}
+                        >
+                          ${payment.amount}
+                        </p>
+                        <p className="text-[10px] text-sa-text-dim">{payment.timestamp}</p>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </PanelBoundary>
           </Card>
         </div>
       </div>

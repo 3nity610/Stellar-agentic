@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "stellaragent"
 version = "0.1.0"
-description = "AI Agent Payment Rails on Stellar — Python SDK"
+description = "AI Agent Payment Rails on Stellar — Developer SDK"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -40,10 +40,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/stellaragent"
-Documentation = "https://github.com/yourusername/stellaragent/tree/main/python#readme"
-Repository = "https://github.com/yourusername/stellaragent"
-Issues = "https://github.com/yourusername/stellaragent/issues"
+Homepage = "https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic"
+Documentation = "https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/tree/main/python#readme"
+Repository = "https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic"
+Issues = "https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stellaragent"]
@@ -72,7 +72,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 # across modules on purpose to keep the TS mapping one-to-one.
 # SIM300 flags `assert CONSTANT == expr` as a Yoda condition; that reads
 # naturally in assertions and rewriting it would hurt clarity.
-ignore = ["E501", "SIM300"]
+ignore = ["E401", "SIM300"]
 
 [tool.mypy]
 python_version = "3.10"

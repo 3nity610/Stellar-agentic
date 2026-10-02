@@ -1,0 +1,12 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "plugin": ["typedoc-plugin-markdown"],
+  "readme": "none",
+  "hideGenerator": true,
+  "githubPages": false,
+  "excludeExternals": true,
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "sort": ["source-order"],
+  "sourceLinkTemplate": "https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/{path}#L{line}"
+}
