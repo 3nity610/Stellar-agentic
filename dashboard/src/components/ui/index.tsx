@@ -246,6 +246,27 @@ export function EmptyState({ message }: { message: string }) {
   );
 }
 
+// ─── CostEstimate ─────────────────────────────────────────────────────────────
+
+interface CostEstimateProps {
+  minResourceFee?: string;
+  cpuInsns?: string;
+  memBytes?: string;
+  simulateOnly?: boolean;
+}
+
+export function CostEstimate({ minResourceFee, cpuInsns, memBytes, simulateOnly }: CostEstimateProps) {
+  if (!minResourceFee && !cpuInsns && !memBytes) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-sa-text-dim">
+      {simulateOnly && <Badge variant="info">simulation</Badge>}
+      {minResourceFee && <span className="font-mono">fee: {minResourceFee}</span>}
+      {cpuInsns && <span className="font-mono">cpu: {cpuInsns}</span>}
+      {memBytes && <span className="font-mono">mem: {memBytes}</span>}
+    </div>
+  );
+}
+
 // ─── ProgressBar ──────────────────────────────────────────────────────────────
 
 interface ProgressBarProps {
