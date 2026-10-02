@@ -126,13 +126,16 @@ These checks are intentionally fast and focus on formatting/linting. Full test r
 
 ## Testing
 
-All TypeScript tests run from the repo root through Turborepo:
+Run the full repository test matrix (pre-push check aligned with CI) from the repo root with a single command:
 
 ```bash
-pnpm test          # every package: core, react, cli, dashboard e2e
+pnpm test          # pre-push check: TS packages, determinism fixtures, dashboard unit + e2e, Rust (contracts, sdk/rust, signer), and Python SDK
+pnpm test:packages # TypeScript workspace packages only (turbo run test)
 pnpm typecheck     # tsc --noEmit across the workspace
 pnpm lint          # eslint across the workspace
 ```
+
+`pnpm test` invokes `./scripts/test-all.sh`, which runs every suite in `.github/workflows/ci.yml` and skips cleanly with a clear notice if an optional host toolchain (`cargo`, `pytest`, or Playwright Chromium) is not installed locally (pass `pnpm test -- --ci` to fail if any toolchain is absent).
 
 To run one package's suite:
 

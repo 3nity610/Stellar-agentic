@@ -10,7 +10,9 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "test": "turbo run test",
+    "test": "bash ./scripts/test-all.sh",
+    "test:packages": "turbo run test",
+    "test:all": "bash ./scripts/test-all.sh",
     "test:coverage": "turbo run test:coverage",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
