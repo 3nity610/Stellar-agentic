@@ -141,6 +141,7 @@ export type {
   AgentInfo,
   OpenChannelParams,
   PayForAPIParams,
+  PredictPaymentParams,
   ChannelInfo,
   SpendReport,
   JobStatus,
