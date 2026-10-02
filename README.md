@@ -3,11 +3,11 @@
 > **AI Agent Payment Rails built on the Stellar blockchain.**  
 > The fastest, cheapest way to give AI agents autonomous payment capabilities.
 
+[![CI](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/actions/workflows/ci.yml/badge.svg)](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Stellar](https://img.shields.io/badge/Built%20on-Stellar-blue)](https://stellar.org)
 [![Soroban](https://img.shields.io/badge/Smart%20Contracts-Soroban-purple)](https://soroban.stellar.org)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2)](https://discord.gg/stellaragent)
 
 ---
 
@@ -31,11 +31,22 @@ stellaragent/
 │   ├── agent_wallet_factory/
 │   ├── payment_channel/
 │   ├── escrow/
-│   └── rate_limiter/
-├── sdk/              # TypeScript SDK
-│   └── src/
+│   ├── rate_limiter/
+│   ├── circuit_breaker/
+│   ├── price_oracle/
+│   └── amm_swap/
+├── packages/
+│   ├── core/         # @stellaragent/core — the TypeScript SDK
+│   ├── react/        # @stellaragent/react — hooks
+│   ├── indexer/      # Audit ledger, reports, exports, delivery (see packages/indexer/README.md)
+│   └── cli/          # @stellaragent/cli
+├── python/           # stellaragent — the Python SDK
+├── services/
+│   └── signer/       # stellaragent-signer — the remote signing service
 ├── dashboard/        # React + Tailwind business dashboard
-│   └── src/
+├── fixtures/         # Shared TS ↔ Python ↔ Rust determinism fixtures
+├── scripts/          # Deployment and fixture tooling
+├── zk/               # Solvency-proof circuits (Rust)
 └── docs/             # Documentation
 ```
 
@@ -62,8 +73,22 @@ stellaragent/
 ┌──────────────────────▼──────────────────────────────┐
 │              Stellar Blockchain                       │
 │         USDC · XLM · 2.5s finality · ~$0             │
+└──────────────────────┬──────────────────────────────┘
+                       │ Soroban contract events
+┌──────────────────────▼──────────────────────────────┐
+│             @stellaragent/indexer                    │
+│       SQLite audit trail · REST query API            │
+└──────────────────────┬──────────────────────────────┘
+                       │ indexed history and state
+┌──────────────────────▼──────────────────────────────┐
+│          Dashboards · operators · agent tooling      │
 └─────────────────────────────────────────────────────┘
 ```
+
+The [`@stellaragent/indexer`](packages/indexer/README.md) consumes Soroban
+contract events, persists a durable audit trail, and exposes indexed history
+and reconstructed state through REST and typed `EventStore` queries for
+dashboards, operators, and agent tooling.
 
 ---
 
@@ -80,14 +105,22 @@ import { StellarAgent } from '@stellaragent/sdk';
 
 const agent = await StellarAgent.create({
   network: 'testnet',
-  spendLimit: { amount: '10', asset: 'USDC', period: 'hourly' },
+});
+
+await agent.createAgentWallet('research-agent');
+await agent.openChannel({
+  token: 'XLM',
+  deposit: '10',
+  limitPerPeriod: '5',
+  period: 'hourly',
 });
 
 // Pay for an API call
 await agent.payForAPI({
   endpoint: 'https://api.example.com/inference',
+  recipient: 'G...API_PROVIDER_ADDRESS',
   amount: '0.001',
-  asset: 'USDC',
+  asset: 'XLM',
 });
 
 // Agent-to-agent escrow job
@@ -95,17 +128,140 @@ const job = await agent.requestWork({
   workerAgent: 'G...AGENT_ADDRESS',
   task: 'Summarize this document',
   escrowAmount: '0.05',
-  asset: 'USDC',
+  asset: 'XLM',
 });
 ```
 
-### Contracts (Rust/Soroban)
+Agents can also pay from the channel asset while the recipient receives a
+different asset. Configure AMM/path-payment providers, call `agent.quote()` to
+preview the deterministic route and cost, then pass that quote unchanged to
+`payForAPI()`. Multi-hop execution is atomic and the TypeScript/Python selector
+is verified against shared fixtures. See the
+[multi-asset routing guide](docs/payment-routing.md).
+
+Contract IDs must be configured through `contracts` or the
+`STELLARAGENT_<NETWORK>_*` environment variables described in the deployment
+guide. Friendly non-XLM asset codes also need an `assetContracts` mapping to
+their deployed Stellar Asset Contract ID.
+
+#### Production: keep the key out of the agent process
+
+Holding a raw secret in a long-lived process is a real risk once an agent has
+funds. Pass a `signer` instead — the key stays behind a network boundary and
+never enters this process:
+
+```typescript
+import { StellarAgent, RemoteSigner } from '@stellaragent/sdk';
+
+const agent = await StellarAgent.create({
+  network: 'mainnet',
+  signer: new RemoteSigner({
+    url: 'https://signer.internal',
+    token: process.env.SIGNER_TOKEN,
+    expectedPublicKey: process.env.AGENT_ADDRESS,
+  }),
+});
+
+agent.holdsSecretKey; // false
+```
+
+See [docs/signing.md](docs/signing.md) for the protocol, the hardware-wallet
+adapter, and why a signing service rather than Ledger.
+
+Full API reference (generated from the SDKs' own TSDoc comments, `pnpm
+docs:api`): [docs/api](docs/api/README.md). For how `@stellaragent/core` is
+put together and where new code belongs, see
+[docs/architecture/core-modules.md](docs/architecture/core-modules.md).
+
+### SDK (Python)
 
 ```bash
-cd contracts
-cargo build --target wasm32-unknown-unknown --release
-stellar contract deploy --wasm target/wasm32-unknown-unknown/release/agent_wallet_factory.wasm --network testnet
+pip install stellaragent
 ```
+
+```python
+from stellaragent import StellarAgent, SpendLimit, PayForAPIParams
+
+agent = StellarAgent.create(
+    network="testnet",
+    spend_limit=SpendLimit(amount="10", asset="USDC", period="hourly"),
+)
+
+agent.pay_for_api(
+    PayForAPIParams(
+        endpoint="https://api.example.com/inference",
+        amount="0.001",
+        asset="USDC",
+    )
+)
+```
+
+The Python SDK's deterministic math is a strict semantic port of the
+TypeScript one — both are verified byte-identical against
+[643 shared fixtures](fixtures/determinism.json) as a required CI check, so a
+mixed TS/Python agent fleet cannot disagree about a bid score. See
+[python/README.md](python/README.md).
+
+### Signing service
+
+An agent with real funds should not hold a raw secret. `services/signer` is the
+server side of the `RemoteSigner` protocol the SDKs already speak — KMS-backed,
+policy-enforcing, and audited:
+
+```bash
+cd services/signer
+cargo run -- issue-token                       # a credential
+cargo run -- check --config config.toml        # validate before binding a port
+cargo run -- serve --config config.toml
+```
+
+```typescript
+const agent = await StellarAgent.create({
+  network: 'testnet',
+  signer: new RemoteSigner({ url: 'https://signer.internal', token: process.env.SIGNER_TOKEN }),
+});
+agent.holdsSecretKey;  // false
+```
+
+It decodes every envelope before signing it, refuses anything it cannot fully
+understand, enforces per-key spend caps and allowlists, and writes a
+hash-chained audit record for every request — granted or refused. Runbook and
+threat model: [docs/signer-deployment.md](docs/signer-deployment.md).
+
+### Contracts (Rust/Soroban)
+
+There are seven contracts, and four of them need initializing in a specific
+order before three others can be wired to them — so deploy them with the
+script rather than by hand:
+
+```bash
+pnpm deploy:contracts --network testnet --source alice
+```
+
+It builds every WASM, deploys, initializes, cross-wires, and writes
+`deployments/testnet.json` plus a matching `.env` block. Full runbook:
+[docs/deployment.md](docs/deployment.md).
+
+### Solvency proofs (Rust)
+
+A `PaymentChannel` owner can prove, without revealing individual payments,
+that a private payment history is a valid explanation for the channel's
+public `limit_per_period` and `total_spent`. The `PaymentChannel` contract
+verifies that proof on-chain through Soroban's native BLS12-381
+`pairing_check` host function.
+
+```bash
+cd zk && cargo build --release --bin solvency-prover
+./target/release/solvency-prover setup --out-dir ./keys
+./target/release/solvency-prover prove --pk ./keys/pk.bin --history history.json \
+    --limit 500000 --total 750000 --out proof.json
+./target/release/solvency-prover verify --vk ./keys/vk.bin --proof proof.json
+```
+
+Step-by-step walkthrough, including the on-chain `set_solvency_vk` and
+`verify_solvency_proof` invocations and measured timings:
+**[docs/zk-solvency-walkthrough.md](docs/zk-solvency-walkthrough.md)**.
+Design and threat model: **[docs/zk-solvency-design.md](docs/zk-solvency-design.md)**.
 
 ### Dashboard
 
@@ -115,18 +271,48 @@ npm install
 npm run dev
 ```
 
+The **Reports** view builds agent/owner statements, attaches exact on-chain
+balance reconciliation, streams CSV/JSON Lines/IIF, drills to transaction
+proof, and administers schedules/dead letters. See the explicit proof limits,
+deployment, verification, and recovery guide in
+[docs/audit-trail.md](docs/audit-trail.md).
+
+The **Rate Limits** view reads live on-chain ceilings through the
+`useRateLimitStatus` hook: per-transaction, hourly, daily, and hourly
+transaction-count limits with exact headroom, an estimate of when each rolling
+window resets, and a local "would this payment go through?" check. It needs
+contract addresses at build time:
+
+```bash
+VITE_STELLAR_NETWORK=testnet \
+VITE_CONTRACT_RATE_LIMITER=C... \
+VITE_CONTRACT_PAYMENT_CHANNEL=C... \
+npm run build
+```
+
+Without them the page says so instead of showing zeros. See
+[dashboard/src/lib/agentRuntime.tsx](dashboard/src/lib/agentRuntime.tsx).
+
 ---
 
 ## Roadmap
 
-- [x] Project scaffolding & architecture
-- [ ] `AgentWalletFactory` Soroban contract
-- [ ] `PaymentChannel` Soroban contract
-- [ ] `Escrow` Soroban contract
-- [ ] `RateLimiter` Soroban contract
-- [ ] TypeScript SDK core
-- [ ] Python SDK
-- [ ] Business dashboard (React + Tailwind)
+- [x] [Project scaffolding & architecture](docs/architecture)
+- [x] [`AgentWalletFactory` Soroban contract](contracts/agent_wallet_factory)
+- [x] [`PaymentChannel` Soroban contract](contracts/payment_channel)
+- [x] [`Escrow` Soroban contract](contracts/escrow)
+- [x] [`RateLimiter` Soroban contract](contracts/rate_limiter)
+- [x] [`CircuitBreaker` & Additional Soroban contracts](contracts/circuit_breaker) — Includes `price_oracle` and `amm_swap`
+- [x] [TypeScript SDK core](packages/core) — `@stellaragent/core` with invocation handlers
+- [x] [React SDK](packages/react) — React hooks for balance, spend limits, and status
+- [x] [CLI Tooling](packages/cli) — `@stellaragent/cli` command-line tools
+- [x] [Python SDK (Math Engine)](python) — Verified by shared fixtures (on-chain calls in progress)
+- [ ] Python SDK On-chain Execution & Complete Bindings
+- [x] [Remote Signer Service](services/signer) — KMS-backed remote signing protocol
+- [x] [Business dashboard (React + Tailwind)](dashboard) — Complete with Playwright test suite
+- [x] [Zero-Knowledge Solvency Proofs](zk) — Groth16 off-chain prover/verifier circuits
+- [x] [Shared Determinism Fixtures](fixtures) — 643+ shared TS ↔ Python ↔ Rust test vectors
+- [ ] Indexer & Event Listener Service
 - [ ] Stellar Community Fund grant application
 - [ ] Mainnet deployment
 
@@ -136,7 +322,7 @@ npm run dev
 
 We welcome contributors! See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get started.
 
-Good first issues are labeled [`good first issue`](https://github.com/yourusername/stellaragent/labels/good%20first%20issue).
+Good first issues are labeled [`good first issue`](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/labels/good%20first%20issue).
 
 ---
 

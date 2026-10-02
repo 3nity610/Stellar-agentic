@@ -4,12 +4,6 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Env, Map, String, Vec,
 };
 
-// ─── Storage Keys ────────────────────────────────────────────────────────────
-
-const ADMIN_KEY: &str = "admin";
-const AGENTS_KEY: &str = "agents";
-const AGENT_COUNT_KEY: &str = "agent_count";
-
 // ─── Data Types ──────────────────────────────────────────────────────────────
 
 /// Metadata stored on-chain for each agent wallet
@@ -30,15 +24,17 @@ pub struct AgentInfo {
     pub total_ops: u64,
 }
 
-/// Events emitted by this contract
-#[contracttype]
-pub enum Event {
-    AgentCreated,
-    AgentDeactivated,
-    AgentReactivated,
-}
-
 // ─── Contract ────────────────────────────────────────────────────────────────
+
+
+pub const DAY_IN_LEDGERS: u32 = 17280;
+pub const INSTANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
+
+
+pub fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
 
 #[contract]
 pub struct AgentWalletFactory;
@@ -50,6 +46,7 @@ impl AgentWalletFactory {
     /// Initialize the factory with an admin address.
     /// Must be called once after deployment.
     pub fn initialize(env: Env, admin: Address) {
+        extend_instance_ttl(&env);
         if env.storage().instance().has(&symbol_short!("admin")) {
             panic!("already initialized");
         }
@@ -78,6 +75,7 @@ impl AgentWalletFactory {
     /// # Returns
     /// The agent ID (incrementing counter)
     pub fn create_agent(env: Env, owner: Address, agent_address: Address, name: String) -> u64 {
+        extend_instance_ttl(&env);
         // Require the owner to authorize this call
         owner.require_auth();
 
@@ -106,7 +104,7 @@ impl AgentWalletFactory {
             .get(&symbol_short!("agents"))
             .unwrap_or(Map::new(&env));
 
-        agents.set(agent_id, agent);
+        agents.set(agent_id, agent.clone());
 
         env.storage()
             .instance()
@@ -117,8 +115,12 @@ impl AgentWalletFactory {
 
         // Emit creation event
         env.events().publish(
-            (symbol_short!("factory"), symbol_short!("created")),
+            (symbol_short!("agent"), symbol_short!("created")),
             (agent_id, agent_address, owner),
+        );
+        env.events().publish(
+            (symbol_short!("agent"), symbol_short!("state")),
+            (agent_id, agent),
         );
 
         agent_id
@@ -126,6 +128,7 @@ impl AgentWalletFactory {
 
     /// Deactivate an agent. Only the owner can deactivate their agent.
     pub fn deactivate_agent(env: Env, owner: Address, agent_id: u64) {
+        extend_instance_ttl(&env);
         owner.require_auth();
 
         let mut agents: Map<u64, AgentInfo> = env
@@ -147,13 +150,18 @@ impl AgentWalletFactory {
             .set(&symbol_short!("agents"), &agents);
 
         env.events().publish(
-            (symbol_short!("factory"), symbol_short!("deactiv")),
+            (symbol_short!("agent"), symbol_short!("deactiv")),
             (agent_id, owner),
+        );
+        env.events().publish(
+            (symbol_short!("agent"), symbol_short!("state")),
+            (agent_id, agent),
         );
     }
 
     /// Reactivate a previously deactivated agent.
     pub fn reactivate_agent(env: Env, owner: Address, agent_id: u64) {
+        extend_instance_ttl(&env);
         owner.require_auth();
 
         let mut agents: Map<u64, AgentInfo> = env
@@ -169,20 +177,25 @@ impl AgentWalletFactory {
         }
 
         agent.active = true;
-        agents.set(agent_id, agent);
+        agents.set(agent_id, agent.clone());
         env.storage()
             .instance()
             .set(&symbol_short!("agents"), &agents);
 
         env.events().publish(
-            (symbol_short!("factory"), symbol_short!("reactiv")),
+            (symbol_short!("agent"), symbol_short!("reactiv")),
             (agent_id, owner),
+        );
+        env.events().publish(
+            (symbol_short!("agent"), symbol_short!("state")),
+            (agent_id, agent),
         );
     }
 
     /// Increment the operation counter for an agent.
     /// Called by the PaymentChannel contract after a successful payment.
     pub fn record_operation(env: Env, agent_id: u64) {
+        extend_instance_ttl(&env);
         let mut agents: Map<u64, AgentInfo> = env
             .storage()
             .instance()
@@ -191,16 +204,21 @@ impl AgentWalletFactory {
 
         let mut agent = agents.get(agent_id).expect("agent not found");
         agent.total_ops += 1;
-        agents.set(agent_id, agent);
+        agents.set(agent_id, agent.clone());
         env.storage()
             .instance()
             .set(&symbol_short!("agents"), &agents);
+        env.events().publish(
+            (symbol_short!("agent"), symbol_short!("state")),
+            (agent_id, agent),
+        );
     }
 
     // ── Queries ──────────────────────────────────────────────────────────────
 
     /// Get agent info by ID
     pub fn get_agent(env: Env, agent_id: u64) -> AgentInfo {
+        extend_instance_ttl(&env);
         let agents: Map<u64, AgentInfo> = env
             .storage()
             .instance()
@@ -212,6 +230,7 @@ impl AgentWalletFactory {
 
     /// Get all agents owned by a specific address
     pub fn get_agents_by_owner(env: Env, owner: Address) -> Vec<AgentInfo> {
+        extend_instance_ttl(&env);
         let agents: Map<u64, AgentInfo> = env
             .storage()
             .instance()
@@ -238,6 +257,7 @@ impl AgentWalletFactory {
 
     /// Total number of agents ever created
     pub fn total_agents(env: Env) -> u64 {
+        extend_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&symbol_short!("count"))
@@ -246,6 +266,7 @@ impl AgentWalletFactory {
 
     /// Check if a specific address is a registered active agent
     pub fn is_active_agent(env: Env, address: Address) -> bool {
+        extend_instance_ttl(&env);
         let agents: Map<u64, AgentInfo> = env
             .storage()
             .instance()
@@ -271,115 +292,10 @@ impl AgentWalletFactory {
 
     /// Get the contract admin
     pub fn admin(env: Env) -> Address {
+        extend_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&symbol_short!("admin"))
             .unwrap()
     }
-}
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::testutils::{Address as _, Ledger};
-    use soroban_sdk::{Env, String};
-
-    fn setup() -> (Env, AgentWalletFactoryClient<'static>) {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, AgentWalletFactory);
-        let client = AgentWalletFactoryClient::new(&env, &contract_id);
-        (env, client)
-    }
-
-    #[test]
-    fn test_initialize() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-        assert_eq!(client.admin(), admin);
-        assert_eq!(client.total_agents(), 0);
-    }
-
-    #[test]
-    fn test_create_agent() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let agent_addr = Address::generate(&env);
-
-        client.initialize(&admin);
-
-        let agent_id = client.create_agent(&owner, &agent_addr, &String::from_str(&env, "MyAgent"));
-
-        assert_eq!(agent_id, 1);
-        assert_eq!(client.total_agents(), 1);
-
-        let agent = client.get_agent(&1);
-        assert_eq!(agent.owner, owner);
-        assert_eq!(agent.address, agent_addr);
-        assert!(agent.active);
-        assert_eq!(agent.total_ops, 0);
-    }
-
-    #[test]
-    fn test_deactivate_reactivate() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let agent_addr = Address::generate(&env);
-
-        client.initialize(&admin);
-        let agent_id =
-            client.create_agent(&owner, &agent_addr, &String::from_str(&env, "TestAgent"));
-
-        client.deactivate_agent(&owner, &agent_id);
-        assert!(!client.get_agent(&agent_id).active);
-
-        client.reactivate_agent(&owner, &agent_id);
-        assert!(client.get_agent(&agent_id).active);
-    }
-
-    #[test]
-    fn test_get_agents_by_owner() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-
-        client.initialize(&admin);
-
-        client.create_agent(
-            &owner,
-            &Address::generate(&env),
-            &String::from_str(&env, "Agent1"),
-        );
-        client.create_agent(
-            &owner,
-            &Address::generate(&env),
-            &String::from_str(&env, "Agent2"),
-        );
-
-        let agents = client.get_agents_by_owner(&owner);
-        assert_eq!(agents.len(), 2);
-    }
-
-    #[test]
-    #[should_panic(expected = "not the agent owner")]
-    fn test_deactivate_wrong_owner_panics() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let attacker = Address::generate(&env);
-
-        client.initialize(&admin);
-        let agent_id = client.create_agent(
-            &owner,
-            &Address::generate(&env),
-            &String::from_str(&env, "Agent"),
-        );
-
-        client.deactivate_agent(&attacker, &agent_id);
-    }
-}
+}\n\n#[cfg(test)]\nmod test;\n

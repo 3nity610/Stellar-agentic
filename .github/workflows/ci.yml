@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ── Rust Contracts ────────────────────────────────────────────────────────
   contracts:
@@ -16,12 +20,12 @@ jobs:
         working-directory: contracts
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32v1-none, wasm32-unknown-unknown
           components: rustfmt, clippy
 
       - name: Cache Rust
@@ -38,73 +42,577 @@ jobs:
       - name: Run tests
         run: cargo test --all
 
-      - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release
+      # wasm32v1-none, not wasm32-unknown-unknown. Under Rust >= 1.82 the latter
+      # emits the reference-types feature, which soroban-sdk 22's VM rejects at
+      # upload with "reference-types not enabled". cargo build still SUCCEEDS —
+      # the artifact is simply undeployable — so building the old target here
+      # would give a green CI and a broken deploy.
+      - name: Build WASM (deployable target)
+        run: cargo build --target wasm32v1-none --release
 
-  # ── TypeScript SDK ────────────────────────────────────────────────────────
-  sdk:
-    name: SDK (TypeScript)
+      # `generate-specs.sh` shells out to it to read each contract's interface
+      # (structs, enums, functions) straight from the built WASM. Installed
+      # from the project's published release binary rather than `cargo
+      # install` — that compiles from source against whatever `ethnum` version
+      # its Cargo.lock happens to pin, which for 25.1.0 fails to build under a
+      # current stable rustc (E0512, a transmute-size check `ethnum` 1.5.2
+      # trips that newer releases don't). The prebuilt binary sidesteps that
+      # entirely and is far faster besides. Cached on its own key since
+      # Swatinem/rust-cache does not cache installed binaries under
+      # ~/.cargo/bin.
+      - name: Cache stellar-cli
+        id: cache-stellar-cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/stellar
+          key: ${{ runner.os }}-stellar-cli-25.1.0-bin
+
+      - name: Install stellar-cli
+        if: steps.cache-stellar-cli.outputs.cache-hit != 'true'
+        run: |
+          curl -sL -o /tmp/stellar-cli.tar.gz \
+            https://github.com/stellar/stellar-cli/releases/download/v25.1.0/stellar-cli-25.1.0-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf /tmp/stellar-cli.tar.gz -C ~/.cargo/bin
+          chmod +x ~/.cargo/bin/stellar
+
+      # The fix for #371: a contract's #[contracttype] struct or enum is the
+      # single source of truth for what packages/core/src/generated/
+      # contract-types.ts and the Python equivalent decode. If a struct gained
+      # or lost a field since contracts/specs/*.json was last committed, this
+      # fails here — before it can surface downstream as a type error, the way
+      # the ChannelInfo/RateLimitStatus breakages this issue describes did.
+      - name: Contract specs are up to date with the built WASM
+        run: ./generate-specs.sh --check
+
+  # ── TypeScript packages ───────────────────────────────────────────────────
+  #
+  # Monorepo packages live under packages/ (@stellaragent/core, cli, react).
+  # Commands run from the repo root with pnpm --filter, matching the dashboard
+  # job. Turbo task caching is restored via actions/cache; set TURBO_TOKEN /
+  # TURBO_TEAM repo secrets for Vercel remote cache if available.
+  packages:
+    name: Packages (TypeScript)
+    runs-on: ubuntu-latest
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+      TURBO_FILTERS: >-
+        --filter=@stellaragent/core
+        --filter=@stellaragent/cli
+        --filter=@stellaragent/react
+        --filter=@stellaragent/indexer
+        --filter=@stellaragent/integration-shared
+        --filter=@stellaragent/mcp-server
+        --filter=@stellaragent/langchain
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        # Version is taken from the "packageManager" field in package.json.
+        # Passing "version" here as well makes the action abort with
+        # ERR_PNPM_BAD_PM_VERSION ("Multiple versions of pnpm specified").
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Turbo
+        uses: actions/cache@v5
+        with:
+          path: |
+            .turbo
+            node_modules/.cache/turbo
+          key: ${{ runner.os }}-turbo-${{ hashFiles('pnpm-lock.yaml', 'turbo.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-${{ hashFiles('pnpm-lock.yaml', 'turbo.json') }}-
+            ${{ runner.os }}-turbo-
+
+      - name: Build, lint, typecheck, and test
+        run: pnpm turbo run build lint typecheck test ${TURBO_FILTERS}
+
+      - name: Test fixture generator
+        run: pnpm fixtures:test
+
+  # ── Generated contract types ──────────────────────────────────────────────
+  #
+  # packages/core/src/generated/contract-types.ts and
+  # python/src/stellaragent/generated/contract_types.py are generated from
+  # contracts/specs/*.json (see scripts/generate-contract-types.ts and #371).
+  # This job needs no Rust toolchain — it only reads the committed spec
+  # JSON — so it is the fast half of the CI gate: the `contracts` job's
+  # `generate-specs.sh --check` catches a spec gone stale against the built
+  # WASM, and this catches the generated SDK types gone stale against the
+  # spec. Either one failing means a contract struct's shape changed and the
+  # SDK has not caught up yet.
+  contract-types:
+    name: Generated contract types
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        # Version is taken from the "packageManager" field in package.json.
+        # Passing "version" here as well makes the action abort with
+        # ERR_PNPM_BAD_PM_VERSION ("Multiple versions of pnpm specified").
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generated TS/Python contract types are up to date
+        run: pnpm contract-types:check
+
+      - name: Shared SDK mock responses match contract specs
+        run: pnpm contract-responses:check
+
+  # ── Public API surface + generated reference ─────────────────────────────
+  #
+  # Two independent things, both derived from the same TSDoc comments:
+  #   - packages/*/api-report.d.ts, a small committed report of the public
+  #     class/type surface (private members stripped) — a diff here in review
+  #     is a public-API change, by construction.
+  #   - docs/api/, the full TypeDoc reference as markdown.
+  # Both are generated files; this job fails if either is stale relative to
+  # the source, which is what makes `pnpm docs:api` a real commitment rather
+  # than a suggestion someone forgets to run.
+  api-docs:
+    name: API surface + docs are up to date
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check public API report and generated docs
+        run: pnpm docs:api:check
+
+  # ── Rust SDK ──────────────────────────────────────────────────────────────
+  #
+  # Separate from the `contracts` job on purpose. That one builds for
+  # wasm32v1-none against soroban-sdk and resolves from contracts/Cargo.lock;
+  # this crate builds for the host, needs std, and has its own workspace and
+  # lockfile at sdk/rust. Sharing a job would mean sharing a dependency
+  # resolution, which is exactly what contracts/Cargo.lock exists to pin away.
+  sdk-rust:
+    name: SDK (Rust)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sdk
+        working-directory: sdk/rust
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          version: latest
+          components: rustfmt, clippy
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
         with:
-          node-version: '20'
-          cache: 'pnpm'
-          cache-dependency-path: pnpm-lock.yaml
+          workspaces: sdk/rust
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: .
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # --all-features compiles the `integration` suite too. Those tests are
+      # #[ignore]d and never run here, but a compile error in them would
+      # otherwise only surface on someone's laptop.
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # Includes tests/determinism.rs (fixture parity), tests/mock_rpc.rs (the
+      # full invocation pipeline over HTTP against a local stub), and the doc
+      # tests on every public item.
+      - name: Run tests
+        run: cargo test --all-features
+
+      - name: Check the docs build without warnings
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      # Catches a manifest that would be rejected at publish time — a missing
+      # description, an unpackageable path dependency — while it is still cheap
+      # to fix, rather than at the moment someone cuts a release.
+      - name: Package (dry run)
+        run: cargo package --allow-dirty --no-verify
+
+  # ── Signing service ───────────────────────────────────────────────────────
+  #
+  # services/signer is the server side of the RemoteSigner protocol. Its own
+  # cargo workspace, separate from both contracts/ (wasm32v1-none, soroban-sdk)
+  # and sdk/rust (a client SDK) — see docs/signer-service-design.md.
+  #
+  # This is the one component that can move money, so the bar is higher than
+  # "it compiles": the adversarial suite has to pass too.
+  signer:
+    name: Service (signer)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/signer
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/signer
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # --all-features compiles the aws-kms adapter's real client wiring. It is
+      # never exercised without credentials, but a compile error in it would
+      # otherwise only surface when someone tried to deploy.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      # Includes tests/adversarial.rs — replay, malformed envelopes, cap
+      # splitting, ledger ratcheting, audit-log injection — and the backend
+      # conformance harness, which asserts every adapter produces byte-identical
+      # signatures for the same payload.
+      - name: Run tests
+        run: cargo test --workspace --all-features
+
+      - name: Check the docs build without warnings
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      # The shipped example must stay loadable: it is what every operator
+      # starts from, and a config that fails validation is a bad first
+      # impression at best and a misconfigured signer at worst.
+      # Built with the same feature set as the container image, so the check
+      # exercises the configuration the image will actually be given rather
+      # than a subset of it.
+      - name: The example configuration validates
+        run: cargo run --features aws-kms --bin stellaragent-signer -- check --config config.example.toml
+
+      - name: Build the container image
+        run: docker build -t stellaragent-signer:ci .
+
+  # ── ZK solvency proofs ───────────────────────────────────────────────────
+  #
+  # zk/ is its own cargo workspace, separate from contracts/ (wasm32v1-none),
+  # sdk/rust and services/signer — see #345. CI never compiled it before, even
+  # though contracts/src/payment_channel.rs::verify_solvency_proof depends on
+  # the encoding this crate defines, so the crate could break with nothing going
+  # red.
+  #
+  # It needs its own lockfile for the same reason contracts/ has one:
+  # soroban-env-host arrives as a dev-dependency (through payment_channel) and
+  # declares ed25519-dalek ">=2.0.0", which resolves to 3.0.0 unpinned — and
+  # 3.0.0 does not compile against it (E0277). zk/Cargo.lock pins 2.2.0.
+  zk:
+    name: ZK solvency proofs (Rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: zk
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zk
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # --all-targets compiles benches/proving_bench.rs too. The benchmarks
+      # are never run here (a single Groth16 proof costs seconds), but a
+      # compile error in them would otherwise only surface on someone's
+      # laptop.
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # --locked makes the lockfile a gate rather than a hint: without it a
+      # transitive release that breaks the build would turn this job red on an
+      # unrelated commit. The end-to-end suite drives real Groth16 proving and
+      # the on-chain BLS12-381 verifier, so it is slow by nature — hence the
+      # job timeout above rather than a per-test budget.
+      - name: Run tests
+        run: cargo test --all --locked
+
+  # ── Python SDK ────────────────────────────────────────────────────────────
+  python:
+    name: SDK (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    defaults:
+      run:
+        working-directory: python
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: python/pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
 
       - name: Type check
-        run: pnpm --filter @stellaragent/sdk typecheck
+        run: mypy
 
-      - name: Run tests
-        run: pnpm --filter @stellaragent/sdk test
+      # Includes tests/test_determinism.py, which asserts the Python math
+      # modules produce byte-identical output to the TypeScript ones for every
+      # case in fixtures/determinism.json.
+      - name: Test
+        run: pytest -q
 
-      - name: Build
-        run: pnpm --filter @stellaragent/sdk build
-
-  # ── Dashboard ─────────────────────────────────────────────────────────────
-  dashboard:
-    name: Dashboard (React)
+  # ── Cross-language determinism (the required check) ───────────────────────
+  #
+  # This is the regression test that matters for the determinism guarantee:
+  # fixtures/determinism.json is generated from the TypeScript implementation,
+  # and all three suites assert against that same file. If they agree, the
+  # three implementations are byte-identical for every case; if any diverges,
+  # this job fails.
+  #
+  # All three run in one job deliberately — split across separate jobs, a
+  # branch-protection rule could be satisfied by one passing while another
+  # was never required.
+  #
+  # Two implementations can agree by sharing an assumption neither of them
+  # wrote down; the third is what tests whether the fixtures actually pin the
+  # semantics rather than merely describing them.
+  determinism:
+    name: Determinism (TS ↔ Python ↔ Rust)
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: latest
+        # Version is taken from the "packageManager" field in package.json.
+        # Passing "version" here as well makes the action abort with
+        # ERR_PNPM_BAD_PM_VERSION ("Multiple versions of pnpm specified").
+        uses: pnpm/action-setup@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sdk/rust
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Python package
+        run: pip install -e "./python[dev]"
+
+      # Fails if the committed fixtures are stale with respect to the
+      # TypeScript implementation — otherwise a TS change could silently make
+      # the fixtures wrong and both suites would keep agreeing with each other
+      # about the old behaviour.
+      - name: Fixtures are up to date with the TypeScript implementation
+        run: pnpm fixtures:check
+
+      - name: TypeScript side
+        run: pnpm --filter @stellaragent/core exec vitest run src/math/__tests__/determinism-fixtures.test.ts
+
+      - name: Python side
+        run: pytest python/tests/test_determinism.py -q
+
+      # Reads the identical fixtures/determinism.json from the repo root and
+      # asserts string equality, never numeric closeness — "close enough" is
+      # precisely what makes two implementations pick different winners.
+      - name: Rust side
+        run: cargo test --test determinism
+        working-directory: sdk/rust
+
+  # ── Deterministic math coverage gate ──────────────────────────────────────
+  #
+  # packages/core/src/math is the correctness-critical core: every bid score
+  # and spend-limit check flows through it, and a regression there is a silent
+  # cross-platform determinism break. The thresholds live in
+  # packages/core/vitest.config.ts and this job fails when they are not met.
+  math-coverage:
+    name: Coverage gate (core/math)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        # Version is taken from the "packageManager" field in package.json.
+        # Passing "version" here as well makes the action abort with
+        # ERR_PNPM_BAD_PM_VERSION ("Multiple versions of pnpm specified").
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Type check
-        run: pnpm --filter @stellaragent/dashboard typecheck
+      - name: Run coverage (fails below threshold)
+        run: pnpm --filter @stellaragent/core run test:coverage
+
+      - name: Summarise coverage
+        if: always()
+        run: |
+          SUMMARY=packages/core/coverage/coverage-summary.json
+          if [ ! -f "$SUMMARY" ]; then
+            echo "No coverage summary produced" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "### Coverage — packages/core/src/math"
+            echo ""
+            echo "| Metric | % |"
+            echo "| --- | --- |"
+            node -e '
+              const t = require("./packages/core/coverage/coverage-summary.json").total;
+              for (const k of ["lines", "statements", "functions", "branches"]) {
+                console.log(`| ${k} | ${t[k].pct}% |`);
+              }
+            '
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-coverage
+          path: packages/core/coverage/
+          retention-days: 7
+
+  # ── Dashboard e2e ─────────────────────────────────────────────────────────
+  dashboard-e2e:
+    name: Dashboard (Playwright)
+    runs-on: ubuntu-latest
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        # Version is taken from the "packageManager" field in package.json.
+        # Passing "version" here as well makes the action abort with
+        # ERR_PNPM_BAD_PM_VERSION ("Multiple versions of pnpm specified").
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Turbo
+        uses: actions/cache@v5
+        with:
+          path: |
+            .turbo
+            node_modules/.cache/turbo
+          key: ${{ runner.os }}-turbo-${{ hashFiles('pnpm-lock.yaml', 'turbo.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-${{ hashFiles('pnpm-lock.yaml', 'turbo.json') }}-
+            ${{ runner.os }}-turbo-
+
+      # @stellaragent/dashboard imports @stellaragent/core, which must be
+      # built before vite can resolve it.
+      - name: Build workspace dependencies
+        run: pnpm turbo run build --filter=@stellaragent/dashboard^...
+
+      - name: Typecheck (app, e2e, and unit configs)
+        run: pnpm --filter @stellaragent/dashboard run typecheck
 
       - name: Lint
-        run: pnpm --filter @stellaragent/dashboard lint
+        run: pnpm --filter @stellaragent/dashboard run lint --max-warnings 0
 
-      - name: Build
-        run: pnpm --filter @stellaragent/dashboard build
+      - name: Unit tests
+        run: pnpm --filter @stellaragent/dashboard run test:unit
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @stellaragent/dashboard exec playwright install --with-deps chromium
+
+      - name: Run e2e tests
+        run: pnpm --filter @stellaragent/dashboard run test
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-report
+          path: dashboard/playwright-report/
+          retention-days: 7
