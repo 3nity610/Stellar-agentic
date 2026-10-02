@@ -40,10 +40,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/stellaragent"
-Documentation = "https://github.com/yourusername/stellaragent/tree/main/python#readme"
-Repository = "https://github.com/yourusername/stellaragent"
-Issues = "https://github.com/yourusername/stellaragent/issues"
+Homepage = "https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic"
+Documentation = "https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/tree/main/python#readme"
+Repository = "https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic"
+Issues = "https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stellaragent"]
