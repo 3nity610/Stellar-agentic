@@ -27,16 +27,19 @@ export class StellarAgentError extends Error {
   readonly code: StellarAgentErrorCode;
   readonly cause?: unknown;
   readonly transactionHash?: string;
+  /** Number of attempts made before this error was surfaced. */
+  readonly attempts?: number;
 
   constructor(
     code: StellarAgentErrorCode,
     message: string,
-    options: { cause?: unknown; transactionHash?: string } = {},
+    options: { cause?: unknown; transactionHash?: string; attempts?: number } = {},
   ) {
     super(message);
     this.name = 'StellarAgentError';
     this.code = code;
     this.cause = options.cause;
     this.transactionHash = options.transactionHash;
+    this.attempts = options.attempts;
   }
 }
