@@ -73,8 +73,22 @@ stellaragent/
 ┌──────────────────────▼──────────────────────────────┐
 │              Stellar Blockchain                       │
 │         USDC · XLM · 2.5s finality · ~$0             │
+└──────────────────────┬──────────────────────────────┘
+                       │ Soroban contract events
+┌──────────────────────▼──────────────────────────────┐
+│             @stellaragent/indexer                    │
+│       SQLite audit trail · REST query API            │
+└──────────────────────┬──────────────────────────────┘
+                       │ indexed history and state
+┌──────────────────────▼──────────────────────────────┐
+│          Dashboards · operators · agent tooling      │
 └─────────────────────────────────────────────────────┘
 ```
+
+The [`@stellaragent/indexer`](packages/indexer/README.md) consumes Soroban
+contract events, persists a durable audit trail, and exposes indexed history
+and reconstructed state through REST and typed `EventStore` queries for
+dashboards, operators, and agent tooling.
 
 ---
 
