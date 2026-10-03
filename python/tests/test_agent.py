@@ -19,6 +19,7 @@ from stellar_sdk import Keypair
 from stellar_sdk.exceptions import Ed25519SecretSeedInvalidError
 
 from stellaragent import StellarAgent
+from stellaragent.agent import DOCS_BASE
 from stellaragent.contracts import (
     CONTRACT_KEYS,
     UNCONFIGURED_CONTRACTS,
@@ -29,7 +30,7 @@ from stellaragent.contracts import (
     is_deployed_address,
     resolve_contracts,
 )
-from stellaragent.types import NETWORK_CONFIGS, PayForAPIParams
+from stellaragent.types import NETWORK_CONFIGS, PayForAPIParams, TxResult
 
 # Same deterministic test keypair the TypeScript suite uses, so both sides
 # assert against the same address.
@@ -279,6 +280,16 @@ class TestPayForAPI:
         with pytest.raises(RuntimeError, match="No active payment channel"):
             make_agent().pay_for_api(PayForAPIParams(endpoint="https://x", amount="0.001"))
 
+    def test_the_refusal_says_how_to_fix_it(self) -> None:
+        """#374: the message has to carry the remedy, not just the diagnosis."""
+        with pytest.raises(RuntimeError) as excinfo:
+            make_agent().pay_for_api(PayForAPIParams(endpoint="https://x", amount="0.001"))
+        message = str(excinfo.value)
+        assert "open_channel()" in message
+        assert DOCS_BASE in message
+        # Same page the TypeScript SDK points at for NO_ACTIVE_CHANNEL.
+        assert message.rstrip().endswith("StellarAgent.md#openchannel")
+
     def test_checks_the_channel_before_validating_arguments(self) -> None:
         # Same ordering as the TypeScript implementation.
         with pytest.raises(RuntimeError, match="No active payment channel"):
@@ -362,12 +373,9 @@ class TestUnimplementedSurface:
             lambda a: a.accept_job(1),
             lambda a: a.submit_result(1, "r"),
             lambda a: a.release_payment(1),
-            lambda a: a.set_rate_limits(None),
-            lambda a: a.check_rate_limit("1"),
             lambda a: a.get_spend_report(),
             lambda a: a.get_channel(1),
             lambda a: a.get_job(1),
-            lambda a: a.get_rate_limit_status(),
         ],
     )
     def test_raises_not_implemented(self, call: Any) -> None:
@@ -377,6 +385,383 @@ class TestUnimplementedSurface:
     def test_open_channel_points_at_the_contract(self) -> None:
         with pytest.raises(NotImplementedError, match="payment_channel"):
             make_agent().open_channel(None)
+
+
+# ─── Rate limit validation ────────────────────────────────────────────────────
+
+
+class TestSetRateLimitsValidation:
+    """Validation runs before any RPC call — no network needed."""
+
+    from stellaragent.types import RateLimitConfig as _RLC
+
+    def test_rejects_zero_max_per_tx(self) -> None:
+        from stellaragent.types import RateLimitConfig
+
+        with pytest.raises(ValueError, match="max_per_tx"):
+            make_agent().set_rate_limits(
+                RateLimitConfig(max_per_tx="0", max_per_hour="1", max_per_day="2", max_txs_per_hour=5)
+            )
+
+    def test_rejects_zero_max_per_hour(self) -> None:
+        from stellaragent.types import RateLimitConfig
+
+        with pytest.raises(ValueError, match="max_per_hour"):
+            make_agent().set_rate_limits(
+                RateLimitConfig(max_per_tx="1", max_per_hour="0", max_per_day="2", max_txs_per_hour=5)
+            )
+
+    def test_rejects_zero_max_per_day(self) -> None:
+        from stellaragent.types import RateLimitConfig
+
+        with pytest.raises(ValueError, match="max_per_day"):
+            make_agent().set_rate_limits(
+                RateLimitConfig(max_per_tx="1", max_per_hour="1", max_per_day="0", max_txs_per_hour=5)
+            )
+
+    def test_rejects_zero_max_txs_per_hour(self) -> None:
+        from stellaragent.types import RateLimitConfig
+
+        with pytest.raises(ValueError, match="max_txs_per_hour"):
+            make_agent().set_rate_limits(
+                RateLimitConfig(max_per_tx="1", max_per_hour="1", max_per_day="2", max_txs_per_hour=0)
+            )
+
+    def test_rejects_per_tx_exceeding_per_hour(self) -> None:
+        from stellaragent.types import RateLimitConfig
+
+        with pytest.raises(ValueError, match="max_per_tx cannot exceed max_per_hour"):
+            make_agent().set_rate_limits(
+                RateLimitConfig(max_per_tx="10", max_per_hour="5", max_per_day="20", max_txs_per_hour=5)
+            )
+
+    def test_rejects_per_hour_exceeding_per_day(self) -> None:
+        from stellaragent.types import RateLimitConfig
+
+        with pytest.raises(ValueError, match="max_per_hour cannot exceed max_per_day"):
+            make_agent().set_rate_limits(
+                RateLimitConfig(max_per_tx="1", max_per_hour="20", max_per_day="10", max_txs_per_hour=5)
+            )
+
+    def test_validation_matches_typescript_ordering(self) -> None:
+        """per_tx > per_hour check fires before per_hour > per_day check."""
+        from stellaragent.types import RateLimitConfig
+
+        # Both constraints violated — TS rejects per_tx > per_hour first.
+        with pytest.raises(ValueError, match="max_per_tx cannot exceed max_per_hour"):
+            make_agent().set_rate_limits(
+                RateLimitConfig(
+                    max_per_tx="100", max_per_hour="50", max_per_day="30", max_txs_per_hour=5
+                )
+            )
+
+
+class TestCheckRateLimitValidation:
+    def test_rejects_zero_amount(self) -> None:
+        with pytest.raises(ValueError, match="amount must be positive"):
+            make_agent().check_rate_limit("0")
+
+    def test_rejects_negative_amount(self) -> None:
+        with pytest.raises(ValueError, match="amount must be positive"):
+            make_agent().check_rate_limit("-1")
+
+
+# ─── Rate limit RPC (mocked) ─────────────────────────────────────────────────
+
+
+class TestSetRateLimitsRpc:
+    """``set_rate_limits`` calls _invoke_contract with the right arguments."""
+
+    def test_calls_invoke_contract_with_correct_args(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from stellaragent.types import RateLimitConfig
+
+        captured: dict[str, Any] = {}
+
+        def fake_invoke(
+            self_: Any,
+            contract_id: str,
+            method: str,
+            args: list[Any],
+            *,
+            read_only: bool,
+        ) -> Any:
+            captured["contract_id"] = contract_id
+            captured["method"] = method
+            captured["args"] = args
+            captured["read_only"] = read_only
+            return TxResult(hash="abc123", success=True, ledger=100)
+
+        from stellaragent import StellarAgent as _SA
+
+        monkeypatch.setattr(_SA, "_invoke_contract", fake_invoke)
+
+        agent = make_agent()
+        config = RateLimitConfig(
+            max_per_tx="1.0",
+            max_per_hour="5.0",
+            max_per_day="20.0",
+            max_txs_per_hour=10,
+        )
+        result = agent.set_rate_limits(config)
+
+        assert result.hash == "abc123"
+        assert result.success is True
+        assert captured["contract_id"] == DEPLOYED["rate_limiter"]
+        assert captured["method"] == "set_limits"
+        assert captured["read_only"] is False
+        # First two args are owner and agent — both the agent address.
+        assert captured["args"][0] == agent.address
+        assert captured["args"][1] == agent.address
+        # Amounts are converted to stroops (×10_000_000).
+        assert captured["args"][2] == 10_000_000       # 1.0 XLM
+        assert captured["args"][3] == 50_000_000       # 5.0 XLM
+        assert captured["args"][4] == 200_000_000      # 20.0 XLM
+        assert captured["args"][5] == 10               # max_txs_per_hour
+
+
+class TestCheckRateLimitRpc:
+    """``check_rate_limit`` delegates to _invoke_contract and returns a bool."""
+
+    def _patch_invoke(self, monkeypatch: pytest.MonkeyPatch, return_value: Any) -> dict[str, Any]:
+        captured: dict[str, Any] = {}
+
+        def fake_invoke(
+            self_: Any,
+            contract_id: str,
+            method: str,
+            args: list[Any],
+            *,
+            read_only: bool,
+        ) -> Any:
+            captured["contract_id"] = contract_id
+            captured["method"] = method
+            captured["args"] = args
+            captured["read_only"] = read_only
+            return return_value
+
+        from stellaragent import StellarAgent as _SA
+
+        monkeypatch.setattr(_SA, "_invoke_contract", fake_invoke)
+        return captured
+
+    def test_returns_true_when_contract_allows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._patch_invoke(monkeypatch, True)
+        assert make_agent().check_rate_limit("0.5") is True
+
+    def test_returns_false_when_contract_blocks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._patch_invoke(monkeypatch, False)
+        assert make_agent().check_rate_limit("0.5") is False
+
+    def test_passes_correct_args_to_contract(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = self._patch_invoke(monkeypatch, True)
+        agent = make_agent()
+        agent.check_rate_limit("2.5")
+
+        assert captured["contract_id"] == DEPLOYED["rate_limiter"]
+        assert captured["method"] == "check"
+        assert captured["read_only"] is True
+        assert captured["args"][0] == agent.address
+        assert captured["args"][1] == 25_000_000  # 2.5 × 10_000_000
+
+    def test_returns_true_for_unconfigured_agent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The contract returns true when no limits are set.
+        self._patch_invoke(monkeypatch, True)
+        assert make_agent().check_rate_limit("1") is True
+
+
+class TestGetRateLimitStatusRpc:
+    """``get_rate_limit_status`` decodes the contract struct into a typed dataclass."""
+
+    def _make_raw_limit(self, **overrides: Any) -> dict[str, Any]:
+        """A minimal raw struct as returned by _invoke_contract for get_limits."""
+        base: dict[str, Any] = {
+            "active": True,
+            "agent": TEST_PUBLIC,
+            "owner": TEST_PUBLIC,
+            "max_per_tx": 10_000_000,
+            "max_per_hour": 50_000_000,
+            "max_per_day": 200_000_000,
+            "max_txs_per_hour": 10,
+            "hourly_spend": 5_000_000,
+            "daily_spend": 15_000_000,
+            "hourly_tx_count": 3,
+            "hour_window_start": 1234,
+            "day_window_start": 1000,
+        }
+        base.update(overrides)
+        return base
+
+    def test_decodes_all_fields_correctly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from stellaragent import StellarAgent as _SA
+
+        raw = self._make_raw_limit()
+        monkeypatch.setattr(
+            _SA,
+            "_invoke_contract",
+            lambda self_, cid, method, args, *, read_only: raw,
+        )
+
+        status = make_agent().get_rate_limit_status()
+
+        assert status.configured is True
+        assert status.active is True
+        assert status.max_per_tx == "1.0000000"
+        assert status.max_per_hour == "5.0000000"
+        assert status.max_per_day == "20.0000000"
+        assert status.max_txs_per_hour == 10
+        assert status.spent_this_hour == "0.5000000"
+        assert status.spent_today == "1.5000000"
+        assert status.txs_this_hour == 3
+        assert status.hour_window_start_ledger == 1234
+        assert status.day_window_start_ledger == 1000
+
+    def test_returns_unconfigured_sentinel_when_no_limits_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The contract panics → Python maps it to configured=False."""
+        from stellaragent import StellarAgent as _SA
+        from stellaragent.types import UNCONFIGURED_RATE_LIMIT
+
+        def fake_invoke(
+            self_: Any,
+            contract_id: str,
+            method: str,
+            args: list[Any],
+            *,
+            read_only: bool,
+        ) -> Any:
+            raise RuntimeError("HostError: no rate limit for agent")
+
+        monkeypatch.setattr(_SA, "_invoke_contract", fake_invoke)
+
+        status = make_agent().get_rate_limit_status()
+
+        assert status == UNCONFIGURED_RATE_LIMIT
+        assert status.configured is False
+
+    def test_re_raises_other_rpc_errors(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from stellaragent import StellarAgent as _SA
+
+        def fake_invoke(
+            self_: Any,
+            contract_id: str,
+            method: str,
+            args: list[Any],
+            *,
+            read_only: bool,
+        ) -> Any:
+            raise RuntimeError("Connection refused")
+
+        monkeypatch.setattr(_SA, "_invoke_contract", fake_invoke)
+
+        with pytest.raises(RuntimeError, match="Connection refused"):
+            make_agent().get_rate_limit_status()
+
+    def test_defaults_to_own_address(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from stellaragent import StellarAgent as _SA
+
+        captured: dict[str, Any] = {}
+
+        def fake_invoke(
+            self_: Any,
+            contract_id: str,
+            method: str,
+            args: list[Any],
+            *,
+            read_only: bool,
+        ) -> Any:
+            captured["args"] = args
+            return {
+                "active": True,
+                "agent": args[0],
+                "owner": args[0],
+                "max_per_tx": 10_000_000,
+                "max_per_hour": 50_000_000,
+                "max_per_day": 200_000_000,
+                "max_txs_per_hour": 5,
+                "hourly_spend": 0,
+                "daily_spend": 0,
+                "hourly_tx_count": 0,
+                "hour_window_start": 0,
+                "day_window_start": 0,
+            }
+
+        monkeypatch.setattr(_SA, "_invoke_contract", fake_invoke)
+        agent = make_agent()
+        agent.get_rate_limit_status()
+
+        assert captured["args"][0] == agent.address
+
+    def test_can_query_a_different_agent_address(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from stellaragent import StellarAgent as _SA
+
+        other = "GABCABCABCABCABCABCABCABCABCABCABCABCABCABCABCABCABCABCS"
+        captured: dict[str, Any] = {}
+
+        def fake_invoke(
+            self_: Any,
+            contract_id: str,
+            method: str,
+            args: list[Any],
+            *,
+            read_only: bool,
+        ) -> Any:
+            captured["args"] = args
+            return {
+                "active": False,
+                "agent": args[0],
+                "owner": args[0],
+                "max_per_tx": 1_000_000,
+                "max_per_hour": 5_000_000,
+                "max_per_day": 20_000_000,
+                "max_txs_per_hour": 3,
+                "hourly_spend": 0,
+                "daily_spend": 0,
+                "hourly_tx_count": 0,
+                "hour_window_start": 500,
+                "day_window_start": 400,
+            }
+
+        monkeypatch.setattr(_SA, "_invoke_contract", fake_invoke)
+
+        status = make_agent().get_rate_limit_status(other)
+
+        assert captured["args"][0] == other
+        assert status.active is False
+
+    def test_unconfigured_rate_limit_sentinel_matches_typescript_shape(self) -> None:
+        """The Python sentinel must be field-for-field equivalent to the TS one."""
+        from stellaragent.types import UNCONFIGURED_RATE_LIMIT
+
+        assert UNCONFIGURED_RATE_LIMIT.configured is False
+        assert UNCONFIGURED_RATE_LIMIT.active is True
+        assert UNCONFIGURED_RATE_LIMIT.max_per_tx == "0"
+        assert UNCONFIGURED_RATE_LIMIT.max_per_hour == "0"
+        assert UNCONFIGURED_RATE_LIMIT.max_per_day == "0"
+        assert UNCONFIGURED_RATE_LIMIT.max_txs_per_hour == 0
+        assert UNCONFIGURED_RATE_LIMIT.spent_this_hour == "0"
+        assert UNCONFIGURED_RATE_LIMIT.spent_today == "0"
+        assert UNCONFIGURED_RATE_LIMIT.txs_this_hour == 0
+        assert UNCONFIGURED_RATE_LIMIT.hour_window_start_ledger == 0
+        assert UNCONFIGURED_RATE_LIMIT.day_window_start_ledger == 0
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ jobs:
         working-directory: contracts
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -106,16 +106,16 @@ jobs:
         --filter=@stellaragent/langchain
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         # Version is taken from the "packageManager" field in package.json.
         # Passing "version" here as well makes the action abort with
         # ERR_PNPM_BAD_PM_VERSION ("Multiple versions of pnpm specified").
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -125,7 +125,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Cache Turbo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             .turbo
@@ -137,6 +137,9 @@ jobs:
 
       - name: Build, lint, typecheck, and test
         run: pnpm turbo run build lint typecheck test ${TURBO_FILTERS}
+
+      - name: Test fixture generator
+        run: pnpm fixtures:test
 
   # ── Generated contract types ──────────────────────────────────────────────
   #
@@ -174,6 +177,9 @@ jobs:
 
       - name: Generated TS/Python contract types are up to date
         run: pnpm contract-types:check
+
+      - name: Shared SDK mock responses match contract specs
+        run: pnpm contract-responses:check
 
   # ── Public API surface + generated reference ─────────────────────────────
   #
@@ -322,6 +328,57 @@ jobs:
       - name: Build the container image
         run: docker build -t stellaragent-signer:ci .
 
+  # ── ZK solvency proofs ───────────────────────────────────────────────────
+  #
+  # zk/ is its own cargo workspace, separate from contracts/ (wasm32v1-none),
+  # sdk/rust and services/signer — see #345. CI never compiled it before, even
+  # though contracts/src/payment_channel.rs::verify_solvency_proof depends on
+  # the encoding this crate defines, so the crate could break with nothing going
+  # red.
+  #
+  # It needs its own lockfile for the same reason contracts/ has one:
+  # soroban-env-host arrives as a dev-dependency (through payment_channel) and
+  # declares ed25519-dalek ">=2.0.0", which resolves to 3.0.0 unpinned — and
+  # 3.0.0 does not compile against it (E0277). zk/Cargo.lock pins 2.2.0.
+  zk:
+    name: ZK solvency proofs (Rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: zk
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zk
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # --all-targets compiles benches/proving_bench.rs too. The benchmarks
+      # are never run here (a single Groth16 proof costs seconds), but a
+      # compile error in them would otherwise only surface on someone's
+      # laptop.
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # --locked makes the lockfile a gate rather than a hint: without it a
+      # transitive release that breaks the build would turn this job red on an
+      # unrelated commit. The end-to-end suite drives real Groth16 proving and
+      # the on-chain BLS12-381 verifier, so it is slow by nature — hence the
+      # job timeout above rather than a per-test budget.
+      - name: Run tests
+        run: cargo test --all --locked
+
   # ── Python SDK ────────────────────────────────────────────────────────────
   python:
     name: SDK (Python ${{ matrix.python-version }})
@@ -335,10 +392,10 @@ jobs:
         working-directory: python
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
@@ -379,23 +436,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         # Version is taken from the "packageManager" field in package.json.
         # Passing "version" here as well makes the action abort with
         # ERR_PNPM_BAD_PM_VERSION ("Multiple versions of pnpm specified").
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -444,16 +501,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         # Version is taken from the "packageManager" field in package.json.
         # Passing "version" here as well makes the action abort with
         # ERR_PNPM_BAD_PM_VERSION ("Multiple versions of pnpm specified").
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -488,7 +545,7 @@ jobs:
 
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: core-coverage
           path: packages/core/coverage/
@@ -503,16 +560,16 @@ jobs:
       TURBO_TEAM: ${{ vars.TURBO_TEAM }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         # Version is taken from the "packageManager" field in package.json.
         # Passing "version" here as well makes the action abort with
         # ERR_PNPM_BAD_PM_VERSION ("Multiple versions of pnpm specified").
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -522,7 +579,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Cache Turbo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             .turbo
@@ -540,6 +597,9 @@ jobs:
       - name: Typecheck (app, e2e, and unit configs)
         run: pnpm --filter @stellaragent/dashboard run typecheck
 
+      - name: Lint
+        run: pnpm --filter @stellaragent/dashboard run lint --max-warnings 0
+
       - name: Unit tests
         run: pnpm --filter @stellaragent/dashboard run test:unit
 
@@ -551,7 +611,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-report
           path: dashboard/playwright-report/

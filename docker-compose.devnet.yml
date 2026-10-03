@@ -1,0 +1,20 @@
+# Docker Compose for StellarAgent Local Devnet (Soroban standalone)
+# Run with: docker compose -f docker-compose.devnet.yml up -d
+services:
+  stellar-devnet:
+    image: stellar/quickstart:testing
+    container_name: stellaragent-devnet
+    platform: linux/amd64
+    command: ["--local", "--enable-soroban-rpc"]
+    ports:
+      - "8000:8000"
+    environment:
+      - STELLAR_CORE_LOG_LEVEL=INFO
+      - SOROBAN_RPC_LOG_LEVEL=INFO
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/friendbot?addr=GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 > /dev/null || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped

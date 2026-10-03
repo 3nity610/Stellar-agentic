@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { clsx } from 'clsx';
 import type { ReactNode } from 'react';
 import { pctNumber, clamp100 } from '../../lib/deterministic-math.js';
+import type { AgentInfo } from '@stellaragent/core';
 
 // ─── Badge ────────────────────────────────────────────────────────────────────
 
@@ -167,6 +168,71 @@ export function SectionHeader({ title, subtitle, action }: SectionHeaderProps) {
   );
 }
 
+// ─── AgentList ────────────────────────────────────────────────────────────────
+
+interface AgentListProps {
+  agents: AgentInfo[];
+  isActive?: (address: string) => boolean;
+  onSelect?: (agent: AgentInfo) => void;
+  emptyMessage?: string;
+}
+
+export function AgentList({
+  agents,
+  isActive,
+  onSelect,
+  emptyMessage = 'No agents found for this owner.',
+}: AgentListProps) {
+  if (agents.length === 0) {
+    return <EmptyState message={emptyMessage} />;
+  }
+
+  return (
+    <ul className="flex flex-col gap-2">
+      {agents.map((agent) => {
+        const active = isActive ? isActive(agent.address) : agent.active;
+        return (
+          <li
+            key={agent.address}
+            className={clsx(
+              'flex items-center justify-between rounded border border-sa-border bg-sa-surface/60 px-3 py-2',
+              onSelect && 'cursor-pointer hover:border-sa-accent/40 transition-colors',
+            )}
+            onClick={onSelect ? () => onSelect(agent) : undefined}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <StatusDot status={active ? 'active' : 'inactive'} />
+              <div className="min-w-0">
+                <p className="text-sm text-sa-text truncate">{agent.name ?? 'Unnamed agent'}</p>
+                <AddressChip address={agent.address} />
+              </div>
+            </div>
+            <Badge variant={active ? 'success' : 'neutral'}>
+              {active ? 'active' : 'inactive'}
+            </Badge>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// ─── TotalAgentsBadge ─────────────────────────────────────────────────────────
+
+interface TotalAgentsBadgeProps {
+  total: number;
+  label?: string;
+}
+
+export function TotalAgentsBadge({ total, label = 'agents' }: TotalAgentsBadgeProps) {
+  return (
+    <Badge variant="info" size="md">
+      <span className="font-mono">{total}</span>
+      <span>{label}</span>
+    </Badge>
+  );
+}
+
 // ─── EmptyState ──────────────────────────────────────────────────────────────
 
 export function EmptyState({ message }: { message: string }) {
@@ -176,6 +242,27 @@ export function EmptyState({ message }: { message: string }) {
         <span className="text-xl">∅</span>
       </div>
       <p className="text-sm">{message}</p>
+    </div>
+  );
+}
+
+// ─── CostEstimate ─────────────────────────────────────────────────────────────
+
+interface CostEstimateProps {
+  minResourceFee?: string;
+  cpuInsns?: string;
+  memBytes?: string;
+  simulateOnly?: boolean;
+}
+
+export function CostEstimate({ minResourceFee, cpuInsns, memBytes, simulateOnly }: CostEstimateProps) {
+  if (!minResourceFee && !cpuInsns && !memBytes) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-sa-text-dim">
+      {simulateOnly && <Badge variant="info">simulation</Badge>}
+      {minResourceFee && <span className="font-mono">fee: {minResourceFee}</span>}
+      {cpuInsns && <span className="font-mono">cpu: {cpuInsns}</span>}
+      {memBytes && <span className="font-mono">mem: {memBytes}</span>}
     </div>
   );
 }

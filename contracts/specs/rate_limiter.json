@@ -1,7 +1,7 @@
 [
   {
     "function_v0": {
-      "doc": "Check if a proposed payment passes rate limits.\\nReturns true if allowed, false if it would be blocked.\\nDoes NOT modify state \\xe2\\x80\\x94 call `record_payment` after a successful tx.",
+      "doc": "Check if a proposed payment passes rate limits.\nReturns true if allowed, false if it would be blocked.\nDoes NOT modify state \xe2\x80\x94 call `record_payment` after a successful tx.",
       "name": "check",
       "inputs": [
         {
@@ -58,7 +58,7 @@
   },
   {
     "function_v0": {
-      "doc": "Emergency kill switch \\xe2\\x80\\x94 disable an agent immediately",
+      "doc": "Emergency kill switch \xe2\x80\x94 disable an agent immediately",
       "name": "kill_agent",
       "inputs": [
         {
@@ -77,7 +77,7 @@
   },
   {
     "function_v0": {
-      "doc": "Register rate limits for an agent.\\nCall this when setting up a new agent.",
+      "doc": "Register rate limits for an agent.\nCall this when setting up a new agent.",
       "name": "set_limits",
       "inputs": [
         {
@@ -208,7 +208,7 @@
           "name": "max_per_hour",
           "type_": "i128"
         },
-        {
+          {
           "doc": "",
           "name": "max_per_day",
           "type_": "i128"
@@ -224,7 +224,7 @@
   },
   {
     "function_v0": {
-      "doc": "Record a payment after it has been successfully executed.\\nMust be called by the payment channel or an authorized contract.",
+      "doc": "Record a payment after it has been successfully executed.\nMust be called by the payment channel or an authorized contract.",
       "name": "record_payment",
       "inputs": [
         {
@@ -247,4 +247,3 @@
     }
   }
 ]
-

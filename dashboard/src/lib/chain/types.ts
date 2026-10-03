@@ -36,6 +36,37 @@ export interface Agent {
 
 export type PaymentStatus = 'success' | 'failed' | 'pending';
 
+/**
+ * Resource cost figures returned by a transaction simulation.
+ *
+ * Mirrors the cost fields `packages/core` surfaces on `TxResult`; every
+ * monetary value is a decimal string for the same determinism reasons as the
+ * rest of this file.
+ */
+export interface SimulationCost {
+  /** Minimum resource fee the network will charge, in stroops. */
+  minResourceFee: string;
+  /** CPU instructions consumed by the simulation. */
+  cpuInsns: string;
+  /** Memory bytes consumed by the simulation. */
+  memBytes: string;
+}
+
+/**
+ * The result of a simulated (and optionally submitted) contract invocation.
+ *
+ * `simulateOnly` callers get this back without a transaction ever hitting the
+ * network, so a call can be priced before it is paid for.
+ */
+export interface TxResult {
+  /** Whether the transaction was actually submitted. */
+  submitted: boolean;
+  /** Transaction hash, present only when `submitted` is true. */
+  txHash?: string;
+  /** Simulation cost estimate, when the source could supply one. */
+  cost?: SimulationCost;
+}
+
 export interface Payment {
   id: string;
   agentId: string;
@@ -116,5 +147,5 @@ export interface PanelFailure {
 }
 
 export interface PanelResult<T> extends Panel<T> {
-  failures: PanelFailure[];
+  failures: PanemFailure[];
 }
