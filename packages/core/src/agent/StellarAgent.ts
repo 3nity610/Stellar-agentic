@@ -16,7 +16,10 @@ import type {
   TxResult,
   ContractAddresses,
   QuoteParams,
+  PredictPaymentParams,
 } from '../types/index.js';
+import { predictPaymentOutcome, type PaymentPrediction } from '../math/predict.js';
+import { toChannelSpendState, toRateLimitSpendState } from './decoding.js';
 import { NETWORK_CONFIGS } from '../types/index.js';
 import { StellarAgentError } from '../errors.js';
 import { resolveContracts, assertDeployed } from '../contracts.js';
@@ -640,8 +643,8 @@ export class StellarAgent {
   /**
    * Get spend report for the current period
    */
-  async getSpendReport(): Promise<SpendReport> {
-    return queries.getSpendReport(this.invokeContract.bind(this), this.contracts.paymentChannel, this.activeChannelId);
+  async getSpendReport(channelId = this.activeChannelId): Promise<SpendReport> {
+    return queries.getSpendReport(this.invokeContract.bind(this), this.contracts.paymentChannel, channelId);
   }
 
   /**
@@ -684,6 +687,37 @@ export class StellarAgent {
    */
   async getLedgerCloseEstimate(): Promise<LedgerCloseEstimate> {
     return queries.getLedgerCloseEstimate(this.networkConfig.horizonUrl);
+  }
+
+  /**
+   * Pre-flight prediction of whether a proposed payment would be blocked by
+   * either a payment channel's spend limit or a configured rate limiter,
+   * computed from on-chain channel, rate-limit, and ledger state.
+   *
+   * Gathers channel state (via {@link StellarAgent.getChannel}), rate-limit
+   * status (via {@link StellarAgent.getRateLimitStatus}), and current ledger
+   * sequence without making state mutations or paying transaction fees.
+   *
+   * @param params Prediction parameters including the proposed payment amount.
+   * @returns Prediction outcome indicating whether the payment would block and why.
+   */
+  async predictPayment(params: PredictPaymentParams): Promise<PaymentPrediction> {
+    const channelId = params.channelId === null ? undefined : (params.channelId ?? this.activeChannelId);
+    const [channel, rateLimit, currentLedger] = await Promise.all([
+      channelId !== undefined ? this.getChannel(channelId) : Promise.resolve(null),
+      this.getRateLimitStatus(params.agentAddress ?? this.address),
+      this.getLatestLedger(),
+    ]);
+
+    const channelState = channel ? toChannelSpendState(channel) : null;
+    const rateLimitState = toRateLimitSpendState(rateLimit);
+
+    return predictPaymentOutcome({
+      channelState,
+      rateLimitState,
+      amount: params.amount,
+      currentLedger,
+    });
   }
 
   // ── Solvency proofs (ZK) ─────────────────────────────────────────────────

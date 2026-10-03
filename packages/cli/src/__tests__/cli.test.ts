@@ -3,8 +3,15 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { formatQuotePreview, formatRoute, runCli, type CliIO } from '../index.js';
-import type { PaymentQuote } from '@stellaragent/core';
+import {
+  formatLimitsStatus,
+  formatQuotePreview,
+  formatRoute,
+  runCli,
+  type CliIO,
+  type LimitsClient,
+} from '../index.js';
+import type { PaymentQuote, RateLimitConfig, RateLimitStatus } from '@stellaragent/core';
 
 const pkgRoot = process.cwd();
 const entry = resolve(pkgRoot, 'src/index.ts');
@@ -50,6 +57,52 @@ function quote(): PaymentQuote {
   };
 }
 
+function rateLimitStatus(overrides: Partial<RateLimitStatus> = {}): RateLimitStatus {
+  return {
+    configured: true,
+    active: true,
+    maxPerTx: '2.0000000',
+    maxPerHour: '10.0000000',
+    maxPerDay: '100.0000000',
+    maxTxsPerHour: 20,
+    spentThisHour: '3.5000000',
+    spentToday: '25.0000000',
+    txsThisHour: 4,
+    hourWindowStartLedger: 1_000,
+    dayWindowStartLedger: 100,
+    ...overrides,
+  };
+}
+
+function limitsClient(status: RateLimitStatus = rateLimitStatus()): {
+  client: LimitsClient;
+  configured: RateLimitConfig[];
+  targets: Array<string | undefined>;
+} {
+  const configured: RateLimitConfig[] = [];
+  const targets: Array<string | undefined> = [];
+  return {
+    configured,
+    targets,
+    client: {
+      address: 'GCLIAGENT',
+      setRateLimits: async (config) => {
+        configured.push(config);
+        return { hash: 'abc123', success: true, ledger: 1_234 };
+      },
+      getRateLimitStatus: async (target) => {
+        targets.push(target);
+        return status;
+      },
+      getLedgerCloseEstimate: async () => ({
+        currentLedger: 1_360,
+        avgLedgerCloseSeconds: 5,
+        observed: true,
+      }),
+    },
+  };
+}
+
 function capture(): { io: CliIO; stdout: string[]; stderr: string[] } {
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -83,6 +136,8 @@ describe('@stellaragent/cli packaging', () => {
       env: { ...process.env, NODE_ENV: 'production' },
     });
     expect(out).toContain('route preview');
+    expect(out).toContain('limits set');
+    expect(out).toContain('limits show');
   });
 });
 

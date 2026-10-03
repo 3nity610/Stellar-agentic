@@ -41,12 +41,29 @@
 //! unavailable" and abort the whole operation rather than assuming a
 //! fallback rate — an unpriced conversion must never be treated as an
 //! unlimited/free one.
+//!
+//! ## Events
+//!
+//! `set_price` emits a single event with topic tuple
+//! `(symbol_short!("oracle"), symbol_short!("price"))` and data payload
+//! `(base: Address, price: i128)`. See `docs/events.md` for the full
+//! cross-contract topic layout and indexer coverage.
 
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Map};
 
 /// Fixed-point scale for published prices, matching Stellar's 7-decimal
 /// convention. Must match `payment_channel::PRICE_SCALE`.
 pub const PRICE_SCALE: i128 = 10_000_000;
+
+
+pub const DAY_IN_LEDGERS: u32 = 17280;
+pub const INSTANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
+
+
+pub fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
 
 #[contract]
 pub struct PriceOracle;
@@ -55,6 +72,7 @@ pub struct PriceOracle;
 impl PriceOracle {
     /// One-time setup. The first caller becomes the admin.
     pub fn initialize(env: Env, admin: Address) {
+        extend_instance_ttl(&env);
         if env.storage().instance().has(&symbol_short!("admin")) {
             panic!("already initialized");
         }
@@ -66,7 +84,13 @@ impl PriceOracle {
 
     /// Admin-only: publish (or update) the trusted price of `base` in terms
     /// of `quote`. See module docs for the fixed-point convention.
+    ///
+    /// Emits: topics `("oracle", "price")`, data `(base, price)`. The
+    /// `quote` asset is intentionally not part of the payload; indexers
+    /// must key on the `base` address and treat the pair as
+    /// `(base, quote)` per the stored map.
     pub fn set_price(env: Env, admin: Address, base: Address, quote: Address, price: i128) {
+        extend_instance_ttl(&env);
         Self::require_admin(&env, &admin);
 
         if price <= 0 {
@@ -88,6 +112,7 @@ impl PriceOracle {
     /// a stored entry. Panics if no price has been published — callers
     /// must fail safe on this, not substitute a default rate.
     pub fn get_price(env: Env, base: Address, quote: Address) -> i128 {
+        extend_instance_ttl(&env);
         if base == quote {
             return PRICE_SCALE;
         }
@@ -99,6 +124,7 @@ impl PriceOracle {
     /// Useful for callers that want to check availability before spending
     /// gas on a call that would otherwise panic.
     pub fn has_price(env: Env, base: Address, quote: Address) -> bool {
+        extend_instance_ttl(&env);
         if base == quote {
             return true;
         }
@@ -106,6 +132,7 @@ impl PriceOracle {
     }
 
     pub fn get_admin(env: Env) -> Address {
+        extend_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&symbol_short!("admin"))

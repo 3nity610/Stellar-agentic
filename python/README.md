@@ -1,7 +1,7 @@
 # StellarAgent — Python SDK
 
 > **AI Agent Payment Rails on Stellar.**
-> The Python counterpart of [`@stellaragent/core`](../packages/core).
+> The Python counterpart of [`@stellaragent/core`](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/tree/main/packages/core).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org)

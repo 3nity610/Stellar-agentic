@@ -28,6 +28,7 @@
 
 - [useStellarAgent](functions/useStellarAgent.md)
 - [StellarAgentProvider](functions/StellarAgentProvider.md)
+- [useAgent](functions/useAgent.md)
 - [useChannel](functions/useChannel.md)
 - [useJob](functions/useJob.md)
 - [usePayForAPI](functions/usePayForAPI.md)

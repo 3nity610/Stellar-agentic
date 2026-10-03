@@ -34,13 +34,25 @@
  * below is cited inline against `contracts/rate_limiter/src/lib.rs` and
  * `contracts/payment_channel/src/lib.rs`.
  *
- * ## `active` gates `check()` on-chain
+ * ## Sliding windows
  *
- * `RateLimiter.kill_agent` sets `RateLimit.active = false`, and
- * `RateLimiter::check` now reads that field: a killed agent is blocked for
- * every amount before any numeric limit comparison. This function mirrors
- * that by emitting `rate_limit_inactive` when `configured` is true and
- * `active` is false.
+ * The contracts now use a bucketed sliding-window accounting scheme rather
+ * than snapping whole windows on expiry. Instead of a single
+ * `hourly_spend`/`daily_spend` accumulator that resets wholesale, spend is
+ * tracked across a small ring of sub-window buckets; the effective spend at
+ * any ledger is the sum of the buckets still inside the trailing window.
+ * This bounds the burst across a window boundary by the configured rate.
+ *
+ * ## A deliberate faithfulness quirk: `active` does not gate `check()`
+ *
+ * `RateLimiter.kill_agent` sets `RateLimit.active = false`, but
+ * `RateLimiter::check` never reads that field — only `is_active()` (a
+ * separate query) does. So a killed agent's `check()` call still evaluates
+ * (and can pass) the per-tx/hourly/daily/tx-count comparisons on-chain today.
+ * This function mirrors that exactly, because its contract is "agrees with
+ * `RateLimiter.check`", not "agrees with what `RateLimiter.check` probably
+ * should do". `RateLimitSpendState.active` is exposed for callers that want
+ * to surface a "killed" badge, but it does not participate in `wouldBlock`.
  *
  * @module predict
  */
@@ -70,6 +82,14 @@ export const LEDGERS_PER_CHANNEL_PERIOD: Record<SpendPeriod, number> = {
 export const RATE_LIMIT_LEDGERS_PER_HOUR = 720;
 export const RATE_LIMIT_LEDGERS_PER_DAY = 17_280;
 
+/**
+ * Number of sub-window buckets per hourly/daily window in the contracts'
+ * bucketed sliding-window scheme. Each bucket covers
+ * `RATE_LIMIT_LEDGERS_PER_HOUR / RATE_LIMIT_BUCKETS_PER_HOUR` ledgers.
+ */
+export const RATE_LIMIT_BUCKETS_PER_HOUR = 6;
+export const RATE_LIMIT_BUCKETS_PER_DAY = 24;
+
 // ─── Input state ──────────────────────────────────────────────────────────────
 
 /** The subset of `Channel` (contracts/payment_channel/src/lib.rs) needed to predict `pay`'s spend-limit check. */
@@ -85,19 +105,18 @@ export interface ChannelSpendState {
 export interface RateLimitSpendState {
   /** `has_limit(agent)` on-chain — `false` means `check()` always returns `true`. */
   configured: boolean;
-  /**
-   * `RateLimit.active` — when `false`, `check()` returns `false` on-chain
-   * for every amount (kill switch). Participates in `wouldBlock` as
-   * `rate_limit_inactive` whenever `configured` is true.
-   */
+  /** `RateLimit.active` — see the module doc for why this does not gate `wouldBlock`. */
   active: boolean;
   maxPerTx: string;
   maxPerHour: string;
   maxPerDay: string;
   maxTxsPerHour: number;
-  hourlySpend: string;
-  dailySpend: string;
-  hourlyTxCount: number;
+  /** Per-bucket hourly spend, oldest bucket first, length `RATE_LIMIT_BUCKETS_PER_HOUR`. */
+  hourlyBuckets: string[];
+  /** Per-bucket daily spend, oldest bucket first, length `RATE_LIMIT_BUCKETS_PER_DAY`. */
+  dailyBuckets: string[];
+  /** Per-bucket hourly tx counts, oldest bucket first, length `RATE_LIMIT_BUCKETS_PER_HOUR`. */
+  hourlyTxBuckets: number[];
   hourWindowStartLedger: number;
   dayWindowStartLedger: number;
 }
@@ -118,7 +137,6 @@ export type BlockReason =
   | 'invalid_amount'
   | 'channel_inactive'
   | 'channel_spend_limit'
-  | 'rate_limit_inactive'
   | 'rate_limit_per_tx'
   | 'rate_limit_hourly'
   | 'rate_limit_daily'
@@ -152,6 +170,47 @@ export function ledgersRemainingInWindow(
   currentLedger: number,
 ): number {
   return Math.max(0, windowStartLedger + ledgersPerWindow - currentLedger);
+}
+
+/**
+ * Sum the buckets still inside the trailing window, dropping any bucket that
+ * has fully aged out. Mirrors the contracts' bucketed sliding-window
+ * accounting: a bucket is live while its start ledger is within
+ * `ledgersPerWindow` of `currentLedger`.
+ */
+export function sumLiveBuckets(
+  buckets: string[],
+  windowStartLedger: number,
+  ledgersPerWindow: number,
+  currentLedger: number,
+): string {
+  const bucketSize = Math.floor(ledgersPerWindow / buckets.length);
+  let total = bn('0');
+  for (let i = 0; i < buckets.length; i++) {
+    const bucketStart = windowStartLedger + i * bucketSize;
+    if (!isWindowExpired(bucketStart, ledgersPerWindow, currentLedger)) {
+      total = add(total, bn(buckets[i]));
+    }
+  }
+  return total.toString();
+}
+
+/** As `sumLiveBuckets`, but for integer tx counts. */
+export function sumLiveTxBuckets(
+  buckets: number[],
+  windowStartLedger: number,
+  ledgersPerWindow: number,
+  currentLedger: number,
+): number {
+  const bucketSize = Math.floor(ledgersPerWindow / buckets.length);
+  let total = 0;
+  for (let i = 0; i < buckets.length; i++) {
+    const bucketStart = windowStartLedger + i * bucketSize;
+    if (!isWindowExpired(bucketStart, ledgersPerWindow, currentLedger)) {
+      total += buckets[i];
+    }
+  }
+  return total;
 }
 
 // ─── The predictor ────────────────────────────────────────────────────────────
@@ -202,47 +261,52 @@ export function predictPaymentOutcome({
   }
 
   if (rateLimitState && rateLimitState.configured) {
-    // `check`: `if !limit.active { return false; }` — a killed agent is
-    // blocked outright, before any numeric limit comparison.
-    if (!rateLimitState.active) {
-      reasons.push('rate_limit_inactive');
-    } else {
-      // `check`: `if amount > limit.max_per_tx { return false; }`
-      if (amt.isGreaterThan(bn(rateLimitState.maxPerTx))) {
-        reasons.push('rate_limit_per_tx');
-      }
+    // See the module doc: `check()` does not gate on `active` — intentionally
+    // not checked here either, to stay faithful to on-chain behavior.
 
-      const hourExpired = isWindowExpired(
+    // `check`: `if amount > limit.max_per_tx { return false; }`
+    if (amt.isGreaterThan(bn(rateLimitState.maxPerTx))) {
+      reasons.push('rate_limit_per_tx');
+    }
+
+    // Bucketed sliding-window accounting: sum only the buckets still inside
+    // the trailing hour/day window rather than resetting wholesale on expiry.
+    const effectiveHourlySpend = bn(
+      sumLiveBuckets(
+        rateLimitState.hourlyBuckets,
         rateLimitState.hourWindowStartLedger,
         RATE_LIMIT_LEDGERS_PER_HOUR,
         currentLedger,
-      );
-      const dayExpired = isWindowExpired(
+      ),
+    );
+    const effectiveDailySpend = bn(
+      sumLiveBuckets(
+        rateLimitState.dailyBuckets,
         rateLimitState.dayWindowStartLedger,
         RATE_LIMIT_LEDGERS_PER_DAY,
         currentLedger,
-      );
+      ),
+    );
+    const effectiveHourlyTxCount = sumLiveTxBuckets(
+      rateLimitState.hourlyTxBuckets,
+      rateLimitState.hourWindowStartLedger,
+      RATE_LIMIT_LEDGERS_PER_HOUR,
+      currentLedger,
+    );
 
-      // `check` zeroes `hourly_spend`/`hourly_tx_count` and/or `daily_spend`
-      // before checking, exactly like `reset_windows_if_needed`.
-      const effectiveHourlySpend = hourExpired ? bn('0') : bn(rateLimitState.hourlySpend);
-      const effectiveDailySpend = dayExpired ? bn('0') : bn(rateLimitState.dailySpend);
-      const effectiveHourlyTxCount = hourExpired ? 0 : rateLimitState.hourlyTxCount;
-
-      // `check`: `if limit.hourly_spend + amount > limit.max_per_hour { return false; }`
-      if (add(effectiveHourlySpend, amt).isGreaterThan(bn(rateLimitState.maxPerHour))) {
-        reasons.push('rate_limit_hourly');
-      }
-      // `check`: `if limit.daily_spend + amount > limit.max_per_day { return false; }`
-      if (add(effectiveDailySpend, amt).isGreaterThan(bn(rateLimitState.maxPerDay))) {
-        reasons.push('rate_limit_daily');
-      }
-      // `check`: `if limit.hourly_tx_count >= limit.max_txs_per_hour { return false; }`
-      // Note `>=`, unlike every amount comparison above — the boundary case
-      // (count already equal to the cap) blocks, it does not allow one more.
-      if (effectiveHourlyTxCount >= rateLimitState.maxTxsPerHour) {
-        reasons.push('rate_limit_tx_count');
-      }
+    // `check`: `if limit.hourly_spend + amount > limit.max_per_hour { return false; }`
+    if (add(effectiveHourlySpend, amt).isGreaterThan(bn(rateLimitState.maxPerHour))) {
+      reasons.push('rate_limit_hourly');
+    }
+    // `check`: `if limit.daily_spend + amount > limit.max_per_day { return false; }`
+    if (add(effectiveDailySpend, amt).isGreaterThan(bn(rateLimitState.maxPerDay))) {
+      reasons.push('rate_limit_daily');
+    }
+    // `check`: `if limit.hourly_tx_count >= limit.max_txs_per_hour { return false; }`
+    // Note `>=`, unlike every amount comparison above — the boundary case
+    // (count already equal to the cap) blocks, it does not allow one more.
+    if (effectiveHourlyTxCount >= rateLimitState.maxTxsPerHour) {
+      reasons.push('rate_limit_tx_count');
     }
   }
 
