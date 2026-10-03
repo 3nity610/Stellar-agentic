@@ -254,6 +254,13 @@ Their action audit trail remains fully queryable, but fields that were never in
 the old payloads (channel token/period, job deadline/task/result, rate-limit
 configuration, and agent name) cannot be recovered historically.
 
+## Backfilling from a historical ledger
+
+`stellaragent-indexer catch-up --from-ledger 1200000` pages through history from
+that ledger (resumable via the persisted checkpoint), then `--tail` composes with
+it: catch up first, then follow the head. `INDEXER_FROM_LEDGER` sets the same
+starting point from the environment.
+
 ## Environment Variables Reference
 
 The following environment variables configure the indexer runtime, database paths, RPC connection, polling cadence, and API endpoints:
@@ -262,6 +269,7 @@ The following environment variables configure the indexer runtime, database path
 | --- | --- | --- | --- |
 | `SOROBAN_RPC_URL` | **Yes** | — | RPC endpoint of the Soroban network (e.g. `http://localhost:8000/soroban/rpc` or Testnet RPC) |
 | `INDEXER_START_LEDGER` | **Yes** | — | Starting ledger sequence number for initial historical catch-up |
+| `INDEXER_FROM_LEDGER` | Optional | — | Historical ledger sequence number to backfill from (replaces events from checkpoint) |
 | `INDEXER_DEPLOYMENT_FILE` | Optional | — | Path to JSON deployment manifest specifying contract addresses |
 | `PAYMENT_CHANNEL_CONTRACT` | Conditional | — | Address of Payment Channel contract (required if not in deployment file) |
 | `ESCROW_CONTRACT` | Conditional | — | Address of Escrow contract (required if not in deployment file) |

@@ -1,7 +1,6 @@
 #![no_std]
 
 //! # Escrow Contract
-//!
 //! Enables agent-to-agent job delegation with trustless payment.
 //!
 //! Flow:
@@ -10,54 +9,38 @@
 //! 3. Agent B calls `submit_result` with proof of work
 //! 4. Agent A (or arbiter) calls `release` — funds go to Agent B
 //! 5. If Agent B doesn't deliver, Agent A calls `refund` after deadline
+//!
+//! ## Events
+//! See `docs/events.md` for the full topic/data layout. Topics are
+//! `(symbol_short!("escrow"), <action>)` with a parallel `state`/`job` snapshot.
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token, Address, Bytes, Env, Map, Symbol,
     Vec,
 };
 
+/// Topic prefix used for all escrow lifecycle events.
+const TOPIC_ESCROW: Symbol = symbol_short!("escrow");
+
 #[cfg(test)]
 mod test;
 
 const DISPUTE_TIMEOUT_LEDGERS: u32 = 14400;
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
-pub enum JobStatus {
-    /// Funded and waiting for a worker
-    Open,
-    /// Worker has accepted
-    InProgress,
-    /// Worker submitted result, awaiting release
-    PendingRelease,
-    /// Funds released to worker — job done
-    Completed,
-    /// Refunded to requester
-    Refunded,
-    /// Disputed — waiting for arbiter
-    Disputed,
-}
+pub enum JobStatus { Open, InProgress, PendingRelease, Completed, Refunded, Disputed }
 
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Job {
-    /// Agent requesting the work
     pub requester: Address,
-    /// Agent doing the work (set on accept)
     pub worker: Option<Address>,
-    /// Optional trusted arbiter for disputes
     pub arbiter: Option<Address>,
-    /// Payment token
     pub token: Address,
-    /// Locked payment amount
     pub amount: i128,
-    /// IPFS hash or description of the task
     pub task_description: Bytes,
-    /// Result submitted by worker
     pub result: Option<Bytes>,
-    /// Ledger deadline — refund available after this
     pub deadline_ledger: u32,
     pub dispute_deadline_ledger: Option<u32>,
     pub status: JobStatus,
@@ -65,6 +48,16 @@ pub struct Job {
 }
 
 // ─── Contract ────────────────────────────────────────────────────────────────
+
+
+pub const DAY_IN_LEDGERS: u32 = 17280;
+pub const INSTANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
+
+
+pub fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
 
 #[contract]
 pub struct Escrow;
@@ -89,19 +82,15 @@ impl Escrow {
         deadline_ledger: u32,
         arbiter: Option<Address>,
     ) -> u64 {
+        extend_instance_ttl(&env);
         requester.require_auth();
-
-        if amount <= 0 {
-            panic!("amount must be positive");
-        }
-        if deadline_ledger <= env.ledger().sequence() {
-            panic!("deadline must be in the future");
-        }
-
-        // Lock funds in this contract
+        
+        // --- Sentinel Guard ---
+        Self::validate_sentinel_guard(&amount)?; 
+        
+        if deadline_ledger <= env.ledger().sequence() { panic!("deadline must be in the future"); }
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&requester, &env.current_contract_address(), &amount);
-
         let job_id = Self::next_id(&env);
         let job = Job {
             requester: requester.clone(),
@@ -120,10 +109,7 @@ impl Escrow {
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("created"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("created")),
             (job_id, requester, amount),
         );
         env.events().publish(
@@ -134,28 +120,18 @@ impl Escrow {
         job_id
     }
 
-    /// Worker agent accepts an open job
     pub fn accept_job(env: Env, worker: Address, job_id: u64) {
+        extend_instance_ttl(&env);
         worker.require_auth();
-
         let mut job = Self::load_job(&env, job_id);
-
-        if job.status != JobStatus::Open {
-            panic!("job is not open");
-        }
-        if env.ledger().sequence() >= job.deadline_ledger {
-            panic!("job has expired");
-        }
-
+        if job.status != JobStatus::Open { panic!("job is not open"); }
+        if env.ledger().sequence() >= job.deadline_ledger { panic!("job has expired"); }
         job.worker = Some(worker.clone());
         job.status = JobStatus::InProgress;
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("accepted"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("accepted")),
             (job_id, worker),
         );
         env.events().publish(
@@ -164,33 +140,19 @@ impl Escrow {
         );
     }
 
-    /// Worker submits their result. Requester must then release or dispute.
-    ///
-    /// # Arguments
-    /// * `result` - Proof of work (IPFS hash, output hash, etc.)
     pub fn submit_result(env: Env, worker: Address, job_id: u64, result: Bytes) {
+        extend_instance_ttl(&env);
         worker.require_auth();
-
         let mut job = Self::load_job(&env, job_id);
-
-        if job.status != JobStatus::InProgress {
-            panic!("job not in progress");
-        }
-
+        if job.status != JobStatus::InProgress { panic!("job not in progress"); }
         let assigned_worker = job.worker.as_ref().expect("no worker assigned");
-        if *assigned_worker != worker {
-            panic!("not the assigned worker");
-        }
-
+        if *assigned_worker != worker { panic!("not the assigned worker"); }
         job.result = Some(result);
         job.status = JobStatus::PendingRelease;
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("result"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("result")),
             (job_id, worker),
         );
         env.events().publish(
@@ -199,12 +161,11 @@ impl Escrow {
         );
     }
 
-    /// Requester (or arbiter) releases payment to the worker
     pub fn release(env: Env, releaser: Address, job_id: u64) {
+        extend_instance_ttl(&env);
         Self::require_not_paused(&env);
 
         releaser.require_auth();
-
         let mut job = Self::load_job(&env, job_id);
 
         if job.status != JobStatus::PendingRelease {
@@ -217,19 +178,13 @@ impl Escrow {
         }
 
         let worker = job.worker.clone().expect("no worker");
-
-        // Pay the worker
         let token_client = token::Client::new(&env, &job.token);
         token_client.transfer(&env.current_contract_address(), &worker, &job.amount);
-
         job.status = JobStatus::Completed;
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("released"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("released")),
             (job_id, worker, job.amount),
         );
         env.events().publish(
@@ -238,10 +193,9 @@ impl Escrow {
         );
     }
 
-    /// Requester reclaims funds if deadline passed with no result
     pub fn refund(env: Env, requester: Address, job_id: u64) {
+        extend_instance_ttl(&env);
         requester.require_auth();
-
         let mut job = Self::load_job(&env, job_id);
 
         if job.requester != requester {
@@ -272,15 +226,11 @@ impl Escrow {
 
         let token_client = token::Client::new(&env, &job.token);
         token_client.transfer(&env.current_contract_address(), &requester, &job.amount);
-
         job.status = JobStatus::Refunded;
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("refunded"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("refunded")),
             (job_id, requester, job.amount),
         );
         env.events().publish(
@@ -289,31 +239,19 @@ impl Escrow {
         );
     }
 
-    /// Requester raises a dispute — locks funds until arbiter resolves
     pub fn dispute(env: Env, requester: Address, job_id: u64) {
+        extend_instance_ttl(&env);
         requester.require_auth();
-
         let mut job = Self::load_job(&env, job_id);
-
-        if job.requester != requester {
-            panic!("not the job requester");
-        }
-        if job.arbiter.is_none() {
-            panic!("no arbiter set for this job");
-        }
-        if job.status != JobStatus::PendingRelease {
-            panic!("can only dispute pending release jobs");
-        }
-
+        if job.requester != requester { panic!("not requester"); }
+        if job.arbiter.is_none() { panic!("no arbiter"); }
+        if job.status != JobStatus::PendingRelease { panic!("can only dispute pending"); }
         job.status = JobStatus::Disputed;
         job.dispute_deadline_ledger = Some(env.ledger().sequence() + DISPUTE_TIMEOUT_LEDGERS);
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("disputed"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("disputed")),
             (job_id, requester),
         );
         env.events().publish(
@@ -324,6 +262,7 @@ impl Escrow {
 
     /// Arbiter resolves a dispute
     pub fn resolve_dispute(env: Env, arbiter: Address, job_id: u64, favor_worker: bool) {
+        extend_instance_ttl(&env);
         Self::require_not_paused(&env);
         arbiter.require_auth();
 
@@ -352,10 +291,7 @@ impl Escrow {
         Self::save_job(&env, job_id, job.clone());
 
         env.events().publish(
-            (
-                soroban_sdk::symbol_short!("escrow"),
-                soroban_sdk::symbol_short!("resolved"),
-            ),
+            (TOPIC_ESCROW, symbol_short!("resolved")),
             (job_id, arbiter, favor_worker),
         );
         env.events().publish(
@@ -367,6 +303,7 @@ impl Escrow {
     /// Wire this escrow contract up to a deployed CircuitBreaker contract.
     /// The first caller to set it becomes the admin for future rotations.
     pub fn set_circuit_breaker(env: Env, admin: Address, circuit_breaker: Address) {
+        extend_instance_ttl(&env);
         admin.require_auth();
 
         let admin_key = symbol_short!("cb_admin");
@@ -386,13 +323,16 @@ impl Escrow {
             .set(&symbol_short!("cb"), &circuit_breaker);
     }
 
-    // ── Queries ──────────────────────────────────────────────────────────────
+    pub fn get_job(env: Env, job_id: u64) -> Job { Self::load_job(&env, job_id) }
+    pub fn job_count(env: Env) -> u64 { env.storage().instance().get(&soroban_sdk::symbol_short!("count")).unwrap_or(0) }
 
     pub fn get_job(env: Env, job_id: u64) -> Job {
+        extend_instance_ttl(&env);
         Self::load_job(&env, job_id)
     }
 
     pub fn job_count(env: Env) -> u64 {
+        extend_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&soroban_sdk::symbol_short!("count"))
@@ -402,19 +342,13 @@ impl Escrow {
     // ── Internals ────────────────────────────────────────────────────────────
 
     fn next_id(env: &Env) -> u64 {
-        let count: u64 = env
-            .storage()
-            .instance()
-            .get(&soroban_sdk::symbol_short!("count"))
-            .unwrap_or(0);
+        let count: u64 = env.storage().instance().get(&soroban_sdk::symbol_short!("count")).unwrap_or(0);
         let next = count + 1;
-        env.storage()
-            .instance()
-            .set(&soroban_sdk::symbol_short!("count"), &next);
+        env.storage().instance().set(&soroban_sdk::symbol_short!("count"), &next);
         next
     }
-
     fn load_job(env: &Env, job_id: u64) -> Job {
+        extend_instance_ttl(env);
         let jobs: Map<u64, Job> = env
             .storage()
             .instance()
@@ -441,14 +375,13 @@ impl Escrow {
     }
 
     fn save_job(env: &Env, job_id: u64, job: Job) {
+        extend_instance_ttl(env);
         let mut jobs: Map<u64, Job> = env
             .storage()
             .instance()
             .get(&soroban_sdk::symbol_short!("jobs"))
             .unwrap_or(Map::new(env));
         jobs.set(job_id, job);
-        env.storage()
-            .instance()
-            .set(&soroban_sdk::symbol_short!("jobs"), &jobs);
+        env.storage().instance().set(&soroban_sdk::symbol_short!("jobs"), &jobs);
     }
 }
