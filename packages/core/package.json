@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:coverage:full": "vitest run --coverage --config vitest.coverage.config.ts",
     "benchmark:fleet": "tsx scripts/benchmark-fleet.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
@@ -47,7 +48,7 @@
     "vitest": "^1.0.0",
     "@vitest/coverage-v8": "^1.0.0",
     "eslint": "^8.0.0",
-    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.70.1",
     "@typescript-eslint/parser": "^7.0.0"
   },
   "exports": {

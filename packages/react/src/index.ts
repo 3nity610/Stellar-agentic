@@ -6,8 +6,16 @@ export {
   type PendingPayment,
 } from './StellarAgentProvider.js';
 
+export { useAgent } from './hooks/useAgent.js';
 export { useChannel } from './hooks/useChannel.js';
 export { useJob } from './hooks/useJob.js';
+export { useJobs, type UseJobsFilters } from './hooks/useJobs.js';
+export {
+  useBalance,
+  type UseBalanceOptions,
+  type UseBalanceData,
+  type UseBalanceResult,
+} from './hooks/useBalance.js';
 export {
   useRateLimitStatus,
   type UseRateLimitStatusOptions,

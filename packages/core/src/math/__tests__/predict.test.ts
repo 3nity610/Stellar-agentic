@@ -218,6 +218,43 @@ describe('predictPaymentOutcome — rate limiter: under all limits', () => {
   });
 });
 
+describe('predictPaymentOutcome — rate limiter: killed agent (active=false)', () => {
+  it('blocks any amount when the agent has been killed', () => {
+    const rateLimitState = makeRateLimit({ active: false });
+    const result = predictPaymentOutcome({ rateLimitState, amount: '1', currentLedger: 1000 });
+    expect(result.wouldBlock).toBe(true);
+    expect(result.reasons).toEqual(['rate_limit_inactive']);
+  });
+
+  it('blocks even amounts well under every numeric limit', () => {
+    const rateLimitState = makeRateLimit({
+      active: false,
+      maxPerTx: '1000000',
+      maxPerHour: '1000000',
+      maxPerDay: '1000000',
+      maxTxsPerHour: 100,
+    });
+    const result = predictPaymentOutcome({ rateLimitState, amount: '5', currentLedger: 1000 });
+    expect(result.wouldBlock).toBe(true);
+    expect(result.reasons).toEqual(['rate_limit_inactive']);
+  });
+
+  it('does not double-report numeric limits for a killed agent', () => {
+    // Killed *and* would've exceeded the per-tx cap anyway — only
+    // rate_limit_inactive should fire, since check() returns false on
+    // !active before any limit comparison.
+    const rateLimitState = makeRateLimit({ active: false, maxPerTx: '1' });
+    const result = predictPaymentOutcome({ rateLimitState, amount: '100', currentLedger: 1000 });
+    expect(result.reasons).toEqual(['rate_limit_inactive']);
+  });
+
+  it('allows once the agent is reactivated (active=true again)', () => {
+    const rateLimitState = makeRateLimit({ active: true, maxPerTx: '100' });
+    const result = predictPaymentOutcome({ rateLimitState, amount: '10', currentLedger: 1000 });
+    expect(result).toEqual({ wouldBlock: false, reasons: [] });
+  });
+});
+
 describe('predictPaymentOutcome — rate limiter: per-tx limit', () => {
   it('allows an amount exactly at the per-tx cap (boundary, inclusive)', () => {
     const rateLimitState = makeRateLimit({ maxPerTx: '100' });
@@ -350,20 +387,34 @@ describe('predictPaymentOutcome — rate limiter: window resets', () => {
   });
 });
 
-describe('predictPaymentOutcome — rate limiter: active/killed does not gate check()', () => {
-  it('still evaluates normally (and can pass) for a killed agent', () => {
-    // Mirrors contracts/rate_limiter/src/lib.rs::check, which never reads
-    // `RateLimit.active` — only `is_active()` (a separate query) does.
+describe('predictPaymentOutcome — rate limiter: killed agent (active=false)', () => {
+  it('blocks any amount when the agent is killed', () => {
+    // Mirrors contracts/rate_limiter/src/lib.rs::check, which now returns
+    // false immediately when `RateLimit.active` is false (kill switch).
     const rateLimitState = makeRateLimit({ active: false, maxPerTx: '100' });
     const result = predictPaymentOutcome({ rateLimitState, amount: '50', currentLedger: 1000 });
-    expect(result.wouldBlock).toBe(false);
+    expect(result.wouldBlock).toBe(true);
+    expect(result.reasons).toEqual(['rate_limit_inactive']);
   });
 
-  it('still blocks a killed agent that exceeds a limit', () => {
+  it('blocks a killed agent even under numeric limits', () => {
+    const rateLimitState = makeRateLimit({ active: false, maxPerTx: '100' });
+    const result = predictPaymentOutcome({ rateLimitState, amount: '10', currentLedger: 1000 });
+    expect(result.wouldBlock).toBe(true);
+    expect(result.reasons).toEqual(['rate_limit_inactive']);
+  });
+
+  it('does not double-report when a killed agent also exceeds a numeric limit', () => {
     const rateLimitState = makeRateLimit({ active: false, maxPerTx: '100' });
     const result = predictPaymentOutcome({ rateLimitState, amount: '101', currentLedger: 1000 });
     expect(result.wouldBlock).toBe(true);
-    expect(result.reasons).toEqual(['rate_limit_per_tx']);
+    expect(result.reasons).toEqual(['rate_limit_inactive']);
+  });
+
+  it('allows payment once the agent is reactivated', () => {
+    const rateLimitState = makeRateLimit({ active: true, maxPerTx: '100' });
+    const result = predictPaymentOutcome({ rateLimitState, amount: '50', currentLedger: 1000 });
+    expect(result.wouldBlock).toBe(false);
   });
 });
 

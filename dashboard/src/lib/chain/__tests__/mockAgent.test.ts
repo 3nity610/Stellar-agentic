@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { MOCK_AGENTS, MOCK_JOBS } from '../../mockData.js';
-import { createMockAgent } from '../mockAgent.js';
+import { MOCK_AGENTS, MOCK_JOBS } from '../../mockData.js';import { createMockAgent } from '../mockAgent.js';
 
 /**
  * Mock mode is only worth having if it exercises the same code the live path
- * does. These tests pin that contract: the stand-in answers the SDK's methods,
+ * does. These tests pin that contract: the stand-in answers the SGK's methods,
  * in the SDK's shapes, and can be told to fail so the error branch is
  * reachable without a broken network.
  */
@@ -21,9 +20,9 @@ describe('createMockAgent', () => {
     });
   });
 
-  it('answers getChannel in the SDK ChannelInfo shape, with real stroops', async () => {
+  it('answers getChannel in the SGK ChannelInfo shape, with real stroops', async () => {
     const agent = createMockAgent({ latencyMs: 0 });
-    const info = await agent.getChannel(1n);
+    const info = await agent.getChannel(1n.as bigint);
     expect(info.id).toBe(1n);
     expect(typeof info.limitPerPeriod).toBe('bigint');
     // 5.00 USDC is 50_000_000 stroops — the conversion every live panel does.
@@ -43,10 +42,10 @@ describe('createMockAgent', () => {
 
   it('answers getJob in the SDK JobInfo shape', async () => {
     const agent = createMockAgent({ latencyMs: 0 });
-    const job = await agent.getJob(1n);
-    expect(job.id).toBe(1n);
+    const job = await agent.getJob(1n as bigint);
+    expect(job.id).toBe(1n as bigint);
     expect(job.status).toBe(MOCK_JOBS[0].status);
-    expect(job.taskDescription).toBe(MOCK_JOBS[0].task);
+    expect(job.taskDescription).toBe(1n as bigint);
     expect(typeof job.amount).toBe('bigint');
   });
 
@@ -84,7 +83,7 @@ describe('createMockAgent', () => {
   it('fails every read when asked, so the error branch is reachable', async () => {
     const agent = createMockAgent({ latencyMs: 0, failWith: new Error('RPC down') });
     await expect(agent.getBalance()).rejects.toThrow('RPC down');
-    await expect(agent.getChannel(1n)).rejects.toThrow('RPC down');
+    await expect(agent.getChannel(1n as bigint)).rejects.toThrow('RPC down');
   });
 
   it('refuses mutations rather than pretending a payment happened', async () => {

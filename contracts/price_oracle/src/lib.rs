@@ -78,6 +78,7 @@ pub struct PriceOracle;
 impl PriceOracle {
     /// One-time setup. The first caller becomes the admin.
     pub fn initialize(env: Env, admin: Address) {
+        extend_instance_ttl(&env);
         if env.storage().instance().has(&symbol_short!("admin")) {
             panic!("already initialized");
         }
@@ -92,7 +93,13 @@ impl PriceOracle {
 
     /// Admin-only: publish (or update) the trusted price of `base` in terms
     /// of `quote`. See module docs for the fixed-point convention.
+    ///
+    /// Emits: topics `("oracle", "price")`, data `(base, price)`. The
+    /// `quote` asset is intentionally not part of the payload; indexers
+    /// must key on the `base` address and treat the pair as
+    /// `(base, quote)` per the stored map.
     pub fn set_price(env: Env, admin: Address, base: Address, quote: Address, price: i128) {
+        extend_instance_ttl(&env);
         Self::require_admin(&env, &admin);
 
         if price <= 0 {
@@ -119,6 +126,7 @@ impl PriceOracle {
     /// freshest published price is older than `max_age` ledgers — callers
     /// must fail safe on either case, not substitute a default rate.
     pub fn get_price(env: Env, base: Address, quote: Address) -> i128 {
+        extend_instance_ttl(&env);
         if base == quote {
             return PRICE_SCALE;
         }
@@ -143,6 +151,7 @@ impl PriceOracle {
     /// Useful for callers that want to check availability before spending
     /// gas on a call that would otherwise panic. Does not check staleness.
     pub fn has_price(env: Env, base: Address, quote: Address) -> bool {
+        extend_instance_ttl(&env);
         if base == quote {
             return true;
         }
@@ -150,6 +159,7 @@ impl PriceOracle {
     }
 
     pub fn get_admin(env: Env) -> Address {
+        extend_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&symbol_short!("admin"))

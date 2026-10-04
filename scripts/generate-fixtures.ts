@@ -36,6 +36,15 @@ import type { AgentBid, BidWeights } from '../packages/core/src/math/bid.js';
 import * as routing from '../packages/core/src/math/routing.js';
 import type { RoutingPolicy } from '../packages/core/src/math/routing.js';
 import type { RouteQuote } from '../packages/core/src/routing/types.js';
+import {
+  predictPaymentOutcome,
+  isWindowExpired,
+  ledgersRemainingInWindow,
+  RATE_LIMIT_LEDGERS_PER_HOUR,
+  RATE_LIMIT_LEDGERS_PER_DAY,
+  type ChannelSpendState,
+  type RateLimitSpendState,
+} from '../packages/core/src/math/predict.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_PATH = resolve(REPO_ROOT, 'fixtures/determinism.json');
@@ -454,6 +463,90 @@ const routingCases = Object.entries(ROUTE_POOLS).flatMap(([poolName, routes]) =>
   })),
 );
 
+// ─── Payment-outcome prediction fixtures ────────────────────────────────────
+
+interface PredictCase {
+  id: string;
+  params: {
+    amount: string;
+    currentLedger: number;
+    channelState?: ChannelSpendState;
+    rateLimitState?: RateLimitSpendState;
+  };
+  expect: { wouldBlock: boolean; reasons: string[] };
+}
+
+const baseChannel = (o: Partial<ChannelSpendState> = {}): ChannelSpendState => ({
+  active: true,
+  limitPerPeriod: '10000',
+  spentThisPeriod: '0',
+  periodStartLedger: 1000,
+  period: 'hourly',
+  ...o,
+});
+
+const baseRateLimit = (o: Partial<RateLimitSpendState> = {}): RateLimitSpendState => ({
+  configured: true,
+  active: true,
+  maxPerTx: '100',
+  maxPerHour: '500',
+  maxPerDay: '2000',
+  maxTxsPerHour: 10,
+  hourlySpend: '0',
+  dailySpend: '0',
+  hourlyTxCount: 0,
+  hourWindowStartLedger: 1000,
+  dayWindowStartLedger: 1000,
+  ...o,
+});
+
+const PREDICT_INPUTS: PredictCase['params'][] = [
+  { amount: '0', currentLedger: 1000 },
+  { amount: '-5', currentLedger: 1000 },
+  { amount: '5', currentLedger: 1000 },
+  { channelState: baseChannel({ active: false }), amount: '1', currentLedger: 1000 },
+  { channelState: baseChannel({ active: false, spentThisPeriod: '9999' }), amount: '500', currentLedger: 1000 },
+  { channelState: baseChannel({ spentThisPeriod: '1000' }), amount: '500', currentLedger: 1000 },
+  { channelState: baseChannel({ spentThisPeriod: '9500' }), amount: '500', currentLedger: 1000 },
+  { channelState: baseChannel({ spentThisPeriod: '9500' }), amount: '501', currentLedger: 1000 },
+  { channelState: baseChannel({ spentThisPeriod: '9999', period: 'hourly', periodStartLedger: 1000 }), amount: '5000', currentLedger: 1720 },
+  { channelState: baseChannel({ spentThisPeriod: '9999', period: 'hourly', periodStartLedger: 1000 }), amount: '5000', currentLedger: 1719 },
+  { channelState: baseChannel({ spentThisPeriod: '9999', period: 'per_ledger', periodStartLedger: 1000 }), amount: '10000', currentLedger: 1001 },
+  { channelState: baseChannel({ spentThisPeriod: '9999', period: 'daily', periodStartLedger: 1000 }), amount: '5000', currentLedger: 1000 + 17_279 },
+  { channelState: baseChannel({ spentThisPeriod: '9999', period: 'daily', periodStartLedger: 1000 }), amount: '5000', currentLedger: 1000 + 17_280 },
+  { rateLimitState: baseRateLimit({ configured: false, maxPerTx: '1' }), amount: '1000000', currentLedger: 1000 },
+  { rateLimitState: baseRateLimit({ maxPerTx: '100' }), amount: '100', currentLedger: 1000 },
+  { rateLimitState: baseRateLimit({ maxPerTx: '100' }), amount: '101', currentLedger: 1000 },
+  { rateLimitState: baseRateLimit({ maxPerTx: '1000', maxPerHour: '500', maxPerDay: '100000', hourlySpend: '480', dailySpend: '480' }), amount: '30', currentLedger: 1000 },
+  { rateLimitState: baseRateLimit({ maxPerTx: '1000', maxPerHour: '500', maxPerDay: '100000', hourlySpend: '480', dailySpend: '480' }), amount: '20', currentLedger: 1000 },
+  { rateLimitState: baseRateLimit({ maxPerTx: '1000', maxPerHour: '100000', maxPerDay: '500', hourlySpend: '0', dailySpend: '480' }), amount: '30', currentLedger: 1000 },
+  { rateLimitState: baseRateLimit({ maxPerTx: '1000', maxPerHour: '100000', maxPerDay: '500', hourlySpend: '0', dailySpend: '480' }), amount: '20', currentLedger: 1000 },
+  { rateLimitState: baseRateLimit({ maxTxsPerHour: 10, hourlyTxCount: 9 }), amount: '1', currentLedger: 1000 },
+  { rateLimitState: baseRateLimit({ maxTxsPerHour: 10, hourlyTxCount: 10 }), amount: '1', currentLedger: 1000 },
+  { rateLimitState: baseRateLimit({ maxPerHour: '500', maxTxsPerHour: 10, hourlySpend: '499', hourlyTxCount: 10, hourWindowStartLedger: 1000, dailySpend: '0' }), amount: '100', currentLedger: 1000 + RATE_LIMIT_LEDGERS_PER_HOUR },
+  { rateLimitState: baseRateLimit({ maxPerHour: '500', hourlySpend: '499', hourWindowStartLedger: 1000 }), amount: '100', currentLedger: 1000 + RATE_LIMIT_LEDGERS_PER_HOUR - 1 },
+  { rateLimitState: baseRateLimit({ maxPerDay: '500', dailySpend: '499', dayWindowStartLedger: 1000, hourlySpend: '0' }), amount: '100', currentLedger: 1000 + RATE_LIMIT_LEDGERS_PER_DAY },
+  { rateLimitState: baseRateLimit({ active: false, maxPerTx: '100' }), amount: '50', currentLedger: 1000 },
+  { rateLimitState: baseRateLimit({ active: false, maxPerTx: '100' }), amount: '101', currentLedger: 1000 },
+  { channelState: baseChannel({ spentThisPeriod: '9900' }), rateLimitState: baseRateLimit({ maxPerTx: '50' }), amount: '200', currentLedger: 1000 },
+  { channelState: baseChannel({ spentThisPeriod: '100' }), rateLimitState: baseRateLimit({ maxPerTx: '100', maxPerHour: '500', maxPerDay: '2000' }), amount: '50', currentLedger: 1000 },
+];
+
+const predictCases: PredictCase[] = PREDICT_INPUTS.map((params, i) => ({
+  id: `case-${i}`,
+  params,
+  expect: predictPaymentOutcome(params),
+}));
+
+const windowCases = [
+  { fn: 'isWindowExpired', args: [1000, 720, 1719] as const, expect: isWindowExpired(1000, 720, 1719) },
+  { fn: 'isWindowExpired', args: [1000, 720, 1720] as const, expect: isWindowExpired(1000, 720, 1720) },
+  { fn: 'isWindowExpired', args: [1000, 720, 5000] as const, expect: isWindowExpired(1000, 720, 5000) },
+  { fn: 'ledgersRemainingInWindow', args: [1000, 720, 1700] as const, expect: ledgersRemainingInWindow(1000, 720, 1700) },
+  { fn: 'ledgersRemainingInWindow', args: [1000, 720, 1720] as const, expect: ledgersRemainingInWindow(1000, 720, 1720) },
+  { fn: 'ledgersRemainingInWindow', args: [1000, 720, 5000] as const, expect: ledgersRemainingInWindow(1000, 720, 5000) },
+];
+
 // ─── Emit ────────────────────────────────────────────────────────────────────
 
 const fixtures = {
@@ -475,6 +568,10 @@ const fixtures = {
   routing: {
     policies: ROUTING_POLICIES,
     rankRoutes: routingCases,
+  },
+  predict: {
+    cases: predictCases,
+    windows: windowCases,
   },
 };
 
@@ -501,7 +598,9 @@ if (process.argv.includes('--check')) {
     scoreBidCases.length +
     rankCases.length +
     spendCases.length +
-    invalidWeightCases.length;
+    invalidWeightCases.length +
+    predictCases.length +
+    windowCases.length;
   console.log(`Wrote ${OUT_PATH}`);
   console.log(`  fixed-point cases : ${fixtures.fixedPoint.length}`);
   console.log(`  scoreBid cases    : ${scoreBidCases.length}`);
@@ -509,5 +608,7 @@ if (process.argv.includes('--check')) {
   console.log(`  spend-limit cases : ${spendCases.length}`);
   console.log(`  invalid weights   : ${invalidWeightCases.length}`);
   console.log(`  routing cases     : ${routingCases.length}`);
+  console.log(`  predict cases     : ${predictCases.length}`);
+  console.log(`  predict windows   : ${windowCases.length}`);
   console.log(`  total             : ${total + routingCases.length}`);
 }
