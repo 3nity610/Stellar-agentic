@@ -25,7 +25,7 @@ import {
   type IndexerProgress,
 } from "./progress.js";
 import type { StatementPeriod } from "./reporting.js";
-import type { EventStore } from "./store.js";
+import type { IEventStore } from "./store.js";
 
 const DELIVERY_STATUSES = new Set<DeliveryStatus>([
   "pending",
@@ -191,7 +191,7 @@ function inputResult<T>(operation: () => T): T {
 async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  store: EventStore,
+  store: IEventStore,
   options: QueryServerOptions,
 ): Promise<void> {
   response.setHeader("access-control-allow-origin", options.corsOrigin ?? "*");
@@ -440,7 +440,7 @@ async function handleRequest(
 
 /** Read-only audit API plus optional durable scheduling administration routes. */
 export function createQueryServer(
-  store: EventStore,
+  store: IEventStore,
   options: QueryServerOptions = {},
 ): Server {
   return createServer((request, response) => {

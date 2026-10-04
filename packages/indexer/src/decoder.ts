@@ -41,10 +41,13 @@ export interface RawRpcEvent {
 export function toRawContractEvent(event: RawRpcEvent): RawContractEvent {
   return {
     id: event.id,
+    type: event.type as RawContractEvent["type"],
     ledger: event.ledger,
     ledgerClosedAt: event.ledgerClosedAt,
+    contractId: event.contractId,
     txHash: event.txHash,
     pagingToken: event.pagingToken,
+    inSuccessfulContractCall: event.inSuccessfulContractCall ?? true,
     topic: event.topic.map((t) => xdr.ScVal.fromXDR(t, "base64")),
     value: xdr.ScVal.fromXDR(event.value, "base64"),
   };
