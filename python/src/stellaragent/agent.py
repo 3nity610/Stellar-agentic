@@ -36,6 +36,7 @@ from .errors import InvalidArgumentError, StellarAgentError, contract_error
 from .fixed_point import to_stroops
 from .types import (
     NETWORK_CONFIGS,
+    UNCONFIGURED_RATE_LIMIT,
     ChannelInfo,
     JobInfo,
     Network,
@@ -696,12 +697,122 @@ class StellarAgent:
     # ── Rate limits ──────────────────────────────────────────────────────────
 
     def set_rate_limits(self, config: RateLimitConfig) -> TxResult:
-        """Configure on-chain rate limits for this agent."""
-        raise NotImplementedError("Not yet implemented")
+        """Configure on-chain rate limits for this agent.
+
+        Calls ``RateLimiter.set_limits`` with the agent acting as both owner
+        and subject — the same semantics as the TypeScript
+        ``mutations.setRateLimits`` helper.
+
+        Validation mirrors the TypeScript ordering so both SDKs reject invalid
+        input with the same error before a transaction is sent:
+
+        1. All amounts must convert to positive stroops.
+        2. ``max_per_tx`` ≤ ``max_per_hour`` ≤ ``max_per_day``.
+        3. ``max_txs_per_hour`` must be a positive integer.
+
+        :raises ValueError: when any limit is non-positive or the ordering
+            constraint is violated.
+        :raises RuntimeError: when the RPC call or transaction submission fails.
+        """
+        max_per_tx_stroops = to_stroops(config.max_per_tx)
+        max_per_hour_stroops = to_stroops(config.max_per_hour)
+        max_per_day_stroops = to_stroops(config.max_per_day)
+
+        if max_per_tx_stroops <= 0:
+            raise ValueError("max_per_tx must be positive")
+        if max_per_hour_stroops <= 0:
+            raise ValueError("max_per_hour must be positive")
+        if max_per_day_stroops <= 0:
+            raise ValueError("max_per_day must be positive")
+        if not isinstance(config.max_txs_per_hour, int) or config.max_txs_per_hour <= 0:
+            raise ValueError("max_txs_per_hour must be a positive integer")
+        if max_per_tx_stroops > max_per_hour_stroops:
+            raise ValueError("max_per_tx cannot exceed max_per_hour")
+        if max_per_hour_stroops > max_per_day_stroops:
+            raise ValueError("max_per_hour cannot exceed max_per_day")
+
+        return self._invoke_contract(  # type: ignore[return-value]
+            self._contracts.rate_limiter,
+            "set_limits",
+            [
+                self.address,  # owner
+                self.address,  # agent
+                int(max_per_tx_stroops),
+                int(max_per_hour_stroops),
+                int(max_per_day_stroops),
+                config.max_txs_per_hour,
+            ],
+            read_only=False,
+        )
 
     def check_rate_limit(self, amount: str) -> bool:
-        """Whether a payment would be blocked by rate limits (read-only)."""
-        raise NotImplementedError("Not yet implemented")
+        """Whether a payment of ``amount`` would be allowed by rate limits.
+
+        Read-only — mirrors ``queries.checkRateLimit`` in the TypeScript SDK.
+        Returns ``True`` when no limits have been configured (the contract's
+        ``check`` method returns ``true`` for an unconfigured agent).
+
+        :param amount: Decimal string in display units (e.g. ``"0.5"``).
+        :raises ValueError: when ``amount`` cannot be parsed as a positive
+            decimal.
+        """
+        amount_stroops = to_stroops(amount)
+        if amount_stroops <= 0:
+            raise ValueError("amount must be positive")
+
+        result = self._invoke_contract(
+            self._contracts.rate_limiter,
+            "check",
+            [self.address, int(amount_stroops)],
+            read_only=True,
+        )
+        # The contract returns a boolean ScVal; _invoke_contract unwraps it.
+        return bool(result)
+
+    def get_rate_limit_status(self, agent_address: str | None = None) -> RateLimitStatus:
+        """Current rate-limit usage alongside the configured limits.
+
+        Mirrors ``getRateLimitStatus`` in ``packages/core/src/agent/queries.ts``.
+
+        ``RateLimiter.get_limits`` panics on-chain ("no rate limit for agent")
+        when nothing has been configured — that panic is caught and mapped to
+        ``configured: False``, exactly as the TypeScript SDK does.
+
+        :param agent_address: Address of the agent to query.  Defaults to
+            this agent's own address, matching the TypeScript default.
+        :returns: :data:`~stellaragent.types.UNCONFIGURED_RATE_LIMIT` when
+            ``set_limits`` has never been called for ``agent_address``.
+        """
+        target = agent_address if agent_address is not None else self.address
+
+        try:
+            raw = self._invoke_contract(
+                self._contracts.rate_limiter,
+                "get_limits",
+                [target],
+                read_only=True,
+            )
+        except RuntimeError as exc:
+            # The contract panics with "no rate limit for agent" when the agent
+            # has never been configured — map to the unconfigured sentinel.
+            if "no rate limit for agent" in str(exc).lower():
+                return UNCONFIGURED_RATE_LIMIT
+            raise
+
+        # raw is a dict with snake_case keys decoded from the Soroban XDR struct.
+        return RateLimitStatus(
+            configured=True,
+            active=bool(raw.get("active", True)),
+            max_per_tx=from_stroops(raw["max_per_tx"]),
+            max_per_hour=from_stroops(raw["max_per_hour"]),
+            max_per_day=from_stroops(raw["max_per_day"]),
+            max_txs_per_hour=int(raw["max_txs_per_hour"]),
+            spent_this_hour=from_stroops(raw["hourly_spend"]),
+            spent_today=from_stroops(raw["daily_spend"]),
+            txs_this_hour=int(raw["hourly_tx_count"]),
+            hour_window_start_ledger=int(raw["hour_window_start"]),
+            day_window_start_ledger=int(raw["day_window_start"]),
+        )
 
     # ── Queries ──────────────────────────────────────────────────────────────
 
@@ -729,11 +840,131 @@ class StellarAgent:
         """Info about an escrow job."""
         raise NotImplementedError("Not yet implemented")
 
-    def get_rate_limit_status(self) -> RateLimitStatus:
-        """Current rate-limit usage alongside the configured limits."""
-        raise NotImplementedError("Not yet implemented")
-
     # ── Internals ────────────────────────────────────────────────────────────
+
+    def _invoke_contract(
+        self,
+        contract_id: str,
+        method: str,
+        args: list[Any],
+        *,
+        read_only: bool,
+    ) -> Any:
+        """Simulate (and optionally submit) a Soroban contract invocation.
+
+        This is the Python counterpart of the TypeScript ``invokeContract``
+        private method.  It uses ``stellar-sdk``'s ``SorobanServer`` to
+        simulate the call and — for mutations — also signs and submits the
+        resulting transaction.
+
+        :param contract_id: Stellar contract address (``C...``).
+        :param method: Contract function name.
+        :param args: Positional arguments in Python-native types:
+            ``str`` → ``Address``, ``int`` → ``i128`` or ``u32`` (inferred
+            from the method), ``bool`` → ``Bool``.
+        :param read_only: When ``True`` only simulate; do not submit.
+        :returns: The decoded return value of the contract call, or a
+            :class:`~stellaragent.types.TxResult` for mutations.
+        :raises RuntimeError: on RPC / simulation / submission errors,
+            including on-chain panics (the error message includes the
+            contract's panic string).
+        """
+        from stellar_sdk import Network as SdkNetwork
+        from stellar_sdk import TransactionBuilder
+        from stellar_sdk.contract import ContractClient
+        from stellar_sdk.soroban_rpc import SendTransactionStatus
+
+        try:
+            passphrase = self._network_config.network_passphrase
+
+            # Build the native ScVal argument list from Python values.
+            from stellar_sdk import xdr as stellar_xdr
+            from stellar_sdk import Address as StellarAddress
+            from stellar_sdk.xdr import SCVal
+
+            def _to_sc_val(v: Any) -> SCVal:
+                if isinstance(v, str):
+                    # Stellar/contract address
+                    return StellarAddress(v).to_xdr_sc_val()
+                if isinstance(v, bool):
+                    return stellar_xdr.SCVal(stellar_xdr.SCValType.SCV_BOOL, b=v)
+                if isinstance(v, int):
+                    # Use i128 for amounts, u32 for counters — callers already
+                    # pass the right Python int size so we just encode as i128
+                    # (safe for all positive values that fit).
+                    from stellar_sdk.xdr import Int128Parts, SCVal, SCValType, Uint32
+                    high = v >> 64
+                    low = v & 0xFFFF_FFFF_FFFF_FFFF
+                    return SCVal(
+                        SCValType.SCV_I128,
+                        i128=Int128Parts(hi=high, lo=low),
+                    )
+                raise TypeError(f"Unsupported argument type {type(v)!r} for Soroban call")
+
+            sc_args = [_to_sc_val(a) for a in args]
+
+            # Load the source account.
+            account = self._rpc.load_account(self.address)
+
+            tx = (
+                TransactionBuilder(
+                    source_account=account,
+                    network_passphrase=passphrase,
+                    base_fee=300,
+                )
+                .append_invoke_contract_function_op(
+                    contract_id=contract_id,
+                    function_name=method,
+                    parameters=sc_args,
+                )
+                .set_timeout(30)
+                .build()
+            )
+
+            # Simulate to preflight the transaction and get resource fees.
+            sim = self._rpc.simulate_transaction(tx)
+            if sim.error:
+                raise RuntimeError(f"Simulation error: {sim.error}")
+
+            if read_only:
+                # Decode the return value from the simulation result.
+                return _decode_sim_result(sim)
+
+            # Mutations: prepare the transaction with simulation results, sign,
+            # and submit.
+            from stellar_sdk import Keypair as _Keypair
+
+            prepared = self._rpc.prepare_transaction(tx, sim)
+            keypair = _Keypair.from_secret(self.secret_key)
+            prepared.sign(keypair)
+
+            response = self._rpc.send_transaction(prepared)
+            if response.status == SendTransactionStatus.ERROR:
+                raise RuntimeError(f"Transaction submission failed: {response.error_result_xdr}")
+
+            # Poll until the transaction is confirmed.
+            import time
+
+            for _ in range(30):
+                status_resp = self._rpc.get_transaction(response.hash)
+                if status_resp.status == "SUCCESS":
+                    return TxResult(
+                        hash=response.hash,
+                        success=True,
+                        ledger=getattr(status_resp, "ledger", None),
+                    )
+                if status_resp.status in ("FAILED", "NOT_FOUND"):
+                    raise RuntimeError(
+                        f"Transaction {response.hash} ended with status {status_resp.status}"
+                    )
+                time.sleep(1)
+
+            raise RuntimeError(f"Timed out waiting for transaction {response.hash}")
+
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(str(exc)) from exc
 
     def _fund_from_friendbot(self) -> None:
         """Best-effort testnet funding. An already-funded account is not an error."""

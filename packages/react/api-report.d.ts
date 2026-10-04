@@ -5,7 +5,7 @@
 
 import * as react from 'react';
 import { ReactNode } from 'react';
-import { StellarAgent, StellarAgentConfig, ChannelInfo, JobInfo, RateLimitStatus, PaymentPrediction, SpendReport, PayForAPIParams, TxResult } from '@stellaragent/core';
+import { StellarAgent, StellarAgentConfig, AgentInfo, ChannelInfo, JobInfo, RateLimitStatus, PaymentPrediction, SpendReport, PayForAPIParams, TxResult } from '@stellaragent/core';
 
 type AsyncStatus = 'idle' | 'loading' | 'ready' | 'error';
 interface AsyncState<T> {
@@ -73,6 +73,16 @@ interface StellarAgentProviderProps {
  * between `usePayForAPI` and `useSpendReport`.
  */
 declare function StellarAgentProvider({ config, children, agent: injectedAgent, }: StellarAgentProviderProps): react.JSX.Element;
+
+/**
+ * Polls `AgentWalletFactory.get_agent` for `agentId` via the current
+ * `StellarAgent`, exposing the agent's identity (name, address, owner) and
+ * its `active` status. Disabled (stays `idle`) until both the agent is
+ * `ready` and `agentId` is defined, so it's safe to call before an agent
+ * has been registered yet — e.g. `useAgent(agentId)` where `agentId` starts
+ * `undefined`.
+ */
+declare function useAgent(agentId: bigint | undefined, options?: UsePollingOptions): UsePollingResult<AgentInfo>;
 
 /**
  * Polls `PaymentChannel.get_channel` for `channelId` via the current
@@ -201,4 +211,4 @@ interface UsePayForAPIResult {
  */
 declare function usePayForAPI(): UsePayForAPIResult;
 
-export { type AsyncState, type AsyncStatus, type PayForAPIStatus, type PendingPayment, type RateLimitWindowEstimate, type StellarAgentContextValue, StellarAgentProvider, type StellarAgentProviderProps, type UsePayForAPIResult, type UsePollingOptions, type UsePollingResult, type UseRateLimitStatusData, type UseRateLimitStatusOptions, type UseRateLimitStatusResult, type UseSpendReportResult, useChannel, useJob, usePayForAPI, usePolling, useRateLimitStatus, useSpendReport, useStellarAgent };
+export { type AsyncState, type AsyncStatus, type PayForAPIStatus, type PendingPayment, type RateLimitWindowEstimate, type StellarAgentContextValue, StellarAgentProvider, type StellarAgentProviderProps, type UsePayForAPIResult, type UsePollingOptions, type UsePollingResult, type UseRateLimitStatusData, type UseRateLimitStatusOptions, type UseRateLimitStatusResult, type UseSpendReportResult, useAgent, useChannel, useJob, usePayForAPI, usePolling, useRateLimitStatus, useSpendReport, useStellarAgent };

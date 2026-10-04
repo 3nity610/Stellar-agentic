@@ -17,6 +17,18 @@
 //!
 //! The trusted node set itself is rotated only by the admin, via
 //! `set_trusted_nodes`.
+//!
+//! ## Events
+//!
+//! All events use the topic tuple `(symbol_short!("cb"), <action>)` where
+//! `<action>` is a short symbol naming the state transition. See
+//! `docs/events.md` for the canonical, cross-contract event reference.
+//!
+//! - `("cb", "nodes")`   — data: `Vec<Address>` (new trusted node set)
+//! - `("cb", "propose")` — data: `Address` (node that proposed a pause)
+//! - `("cb", "paused")`  — data: `bool` (always `true`)
+//! - `("cb", "unpropos")`— data: `Address` (node that proposed an unpause)
+//! - `("cb", "unpause")` — data: `bool` (always `false`)
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Map, Vec};
 
@@ -35,6 +47,16 @@ enum DataKey {
     Paused,
 }
 
+
+pub const DAY_IN_LEDGERS: u32 = 17280;
+pub const INSTANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
+
+
+pub fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
 #[contract]
 pub struct CircuitBreaker;
 
@@ -48,6 +70,7 @@ impl CircuitBreaker {
         trusted_nodes: Vec<Address>,
         propose_window_ledgers: u32,
     ) {
+        extend_instance_ttl(&env);
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
@@ -78,6 +101,7 @@ impl CircuitBreaker {
     /// and a rotation can't be used to instantly complete a quorum that was
     /// forming under the old set.
     pub fn set_trusted_nodes(env: Env, admin: Address, trusted_nodes: Vec<Address>) {
+        extend_instance_ttl(&env);
         Self::require_admin(&env, &admin);
 
         env.storage()
@@ -96,6 +120,7 @@ impl CircuitBreaker {
 
     /// Admin-only: update how long a proposal remains valid.
     pub fn set_propose_window(env: Env, admin: Address, propose_window_ledgers: u32) {
+        extend_instance_ttl(&env);
         Self::require_admin(&env, &admin);
 
         if propose_window_ledgers == 0 {
@@ -108,11 +133,21 @@ impl CircuitBreaker {
 
     /// A trusted node records its approval to pause the system.
     pub fn propose_pause(env: Env, node: Address) {
+        extend_instance_ttl(&env);
         node.require_auth();
         Self::require_trusted(&env, &node);
 
+        let window = Self::get_propose_window(env.clone());
         let mut proposals = Self::pause_proposals(&env);
-        proposals.set(node.clone(), env.ledger().sequence());
+        let current_ledger = env.ledger().sequence();
+
+        if let Some(last_proposed_at) = proposals.get(node.clone()) {
+            if current_ledger < last_proposed_at.saturating_add(window) {
+                panic!("proposal cooldown active");
+            }
+        }
+
+        proposals.set(node.clone(), current_ledger);
         env.storage()
             .instance()
             .set(&DataKey::PauseProposals, &proposals);
@@ -127,6 +162,7 @@ impl CircuitBreaker {
     /// signers to have proposed, not from restricting who can flip the
     /// switch afterwards.
     pub fn execute_pause(env: Env) {
+        extend_instance_ttl(&env);
         let proposals = Self::pause_proposals(&env);
         let count = Self::count_valid(&env, &proposals);
         if count < QUORUM {
@@ -144,6 +180,7 @@ impl CircuitBreaker {
 
     /// A trusted node records its approval to unpause the system.
     pub fn propose_unpause(env: Env, node: Address) {
+        extend_instance_ttl(&env);
         node.require_auth();
         Self::require_trusted(&env, &node);
 
@@ -159,6 +196,7 @@ impl CircuitBreaker {
 
     /// Flip `is_paused` back to false once unpause quorum is reached.
     pub fn unpause(env: Env) {
+        extend_instance_ttl(&env);
         let proposals = Self::unpause_proposals(&env);
         let count = Self::count_valid(&env, &proposals);
         if count < QUORUM {
@@ -179,6 +217,7 @@ impl CircuitBreaker {
     /// Whether the system is currently paused. Defaults to `false` if the
     /// contract has not been initialized (fail-open before setup).
     pub fn is_paused(env: Env) -> bool {
+        extend_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&DataKey::Paused)
@@ -186,6 +225,7 @@ impl CircuitBreaker {
     }
 
     pub fn get_admin(env: Env) -> Address {
+        extend_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&DataKey::Admin)
@@ -193,6 +233,7 @@ impl CircuitBreaker {
     }
 
     pub fn get_trusted_nodes(env: Env) -> Vec<Address> {
+        extend_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&DataKey::TrustedNodes)
@@ -200,6 +241,7 @@ impl CircuitBreaker {
     }
 
     pub fn get_propose_window(env: Env) -> u32 {
+        extend_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&DataKey::ProposeWindow)
@@ -209,6 +251,7 @@ impl CircuitBreaker {
     /// Number of distinct trusted-node pause proposals currently within the
     /// validity window (i.e. how close the system is to a quorum pause).
     pub fn pause_quorum_count(env: Env) -> u32 {
+        extend_instance_ttl(&env);
         let proposals = Self::pause_proposals(&env);
         Self::count_valid(&env, &proposals)
     }
@@ -216,6 +259,7 @@ impl CircuitBreaker {
     /// Number of distinct trusted-node unpause proposals currently within
     /// the validity window.
     pub fn unpause_quorum_count(env: Env) -> u32 {
+        extend_instance_ttl(&env);
         let proposals = Self::unpause_proposals(&env);
         Self::count_valid(&env, &proposals)
     }

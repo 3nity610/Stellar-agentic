@@ -21,7 +21,10 @@ describe('contractError', () => {
     const error = contractError('CONTRACT_ERROR', message);
     expect(error).toBeInstanceOf(StellarAgentError);
     expect(error.code).toBe(code);
-    expect(error.message).toBe(message);
+    // `toContain`, not `toBe`: StellarAgentError appends a remedy line to the
+    // codes that have one (#374). What this case asserts is that the contract
+    // panic string survives the mapping, not that nothing is added after it.
+    expect(error.message).toContain(message);
   });
 
   it('falls back to the given code when nothing matches', () => {

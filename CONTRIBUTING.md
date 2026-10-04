@@ -14,6 +14,7 @@ Thank you for your interest in contributing! StellarAgent is an open-source proj
 - [How to Contribute](#how-to-contribute)
 - [Commit Convention](#commit-convention)
 - [Pull Request Process](#pull-request-process)
+- [Dependency Update PRs](#dependency-update-prs)
 - [Good First Issues](#good-first-issues)
 
 ---
@@ -126,13 +127,16 @@ These checks are intentionally fast and focus on formatting/linting. Full test r
 
 ## Testing
 
-All TypeScript tests run from the repo root through Turborepo:
+Run the full repository test matrix (pre-push check aligned with CI) from the repo root with a single command:
 
 ```bash
-pnpm test          # every package: core, react, cli, dashboard e2e
+pnpm test          # pre-push check: TS packages, determinism fixtures, dashboard unit + e2e, Rust (contracts, sdk/rust, signer), and Python SDK
+pnpm test:packages # TypeScript workspace packages only (turbo run test)
 pnpm typecheck     # tsc --noEmit across the workspace
 pnpm lint          # eslint across the workspace
 ```
+
+`pnpm test` invokes `./scripts/test-all.sh`, which runs every suite in `.github/workflows/ci.yml` and skips cleanly with a clear notice if an optional host toolchain (`cargo`, `pytest`, or Playwright Chromium) is not installed locally (pass `pnpm test -- --ci` to fail if any toolchain is absent).
 
 To run one package's suite:
 
@@ -156,6 +160,22 @@ pnpm --filter @stellaragent/core test:coverage
 CI fails if coverage drops below that. Thresholds live in
 [`packages/core/vitest.config.ts`](packages/core/vitest.config.ts). If you add
 a helper to `math/`, add tests for it in the same PR.
+
+### Coverage reports on pull requests
+
+Beyond that gate, CI publishes coverage to
+[Codecov](https://codecov.io/gh/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic)
+under three flags, and Codecov comments on every PR with the diff coverage and
+how each flag moved:
+
+| Flag | What it measures | Local command |
+| --- | --- | --- |
+| `core-math` | `packages/core/src/math` (the 100% gate above) | `pnpm --filter @stellaragent/core test:coverage` |
+| `typescript` | every TS package with tests, all of `src/` | `pnpm --filter <package> test:coverage` (`test:coverage:full` for core) |
+| `python` | the Python SDK | `cd python && pytest --cov` |
+
+These reports are informational: only the `core/math` gate fails CI. Settings
+live in [`codecov.yml`](codecov.yml).
 
 ### Dashboard e2e (Playwright)
 
@@ -278,7 +298,13 @@ Quick reference:
 ```bash
 pnpm fixtures:generate   # regenerate from packages/core (the reference)
 pnpm fixtures:check      # fail if the committed file is stale
+pnpm fixtures:test       # test generation and --check in temporary directories
 ```
+
+The generator regression tests use Node's built-in test runner and the existing
+`tsx` dependency. They verify deterministic bytes and ordering, plus current,
+stale, and missing fixture checks without changing the committed fixture. They
+also run in the `Packages (TypeScript)` CI job.
 
 If you change either math implementation:
 
@@ -330,6 +356,22 @@ diff is reviewed. `scripts/generate-contract-types.ts` only covers the
 structs the SDKs actually decode today (`AgentInfo`, `Channel`, `Job`,
 `RateLimit`); add a contract there the day another one gains an SDK-facing
 struct.
+
+### Shared contract response fixtures
+
+`fixtures/contract-responses.json` holds example `get_agent`, `get_channel`,
+`get_job`, and `get_limits` results for both SDKs. The TypeScript invocation
+test uses them as mock return values. The Python test checks them against its
+generated dataclasses; Python contract RPC methods are still stubs.
+
+After changing one of these contract structs, regenerate the specs and types
+as above, then update the corresponding response in the JSON file. Integer
+values wider than `u32` are decimal strings, bytes are `0x`-prefixed hex,
+optional values use `null`, and unit enums use a one-item array containing
+the Rust variant name. Run `pnpm contract-responses:check` to compare every
+fixture field and value type with the committed WASM-derived specs. CI runs
+this check alongside `contract-types:check`, so adding a struct field requires
+the fixture and both SDK shape tests to catch up.
 
 ---
 
@@ -414,6 +456,18 @@ Types: `feat`, `fix`, `docs`, `test`, `chore`, `refactor`, `perf`
 
 ---
 
+## Dependency Update PRs
+
+Automated dependency PRs should go through the same review path as any other
+change. Dependabot may group patch-level updates by ecosystem to keep the queue
+manageable; review the generated summary, confirm the manifest or lockfile diff
+is expected, and wait for the normal pull request CI before merging. If CI
+fails, treat it as a dependency compatibility issue and either apply the
+smallest supporting fix or leave the update blocked until the upstream package
+is safe to adopt.
+
+---
+
 ## Deploying contracts
 
 There are seven Soroban contracts, four need a one-time `initialize`, and
@@ -444,13 +498,73 @@ constraints — is in **[docs/deployment.md](docs/deployment.md)**.
 
 If you're new to the project, start here:
 
-- **Contracts**: Write unit tests for the `RateLimiter` contract
-- **SDK**: Add JSDoc comments to all exported functions
-- **Dashboard**: Improve mobile responsiveness of the agent table
-- **Docs**: Add a tutorial for deploying contracts to testnet
+### Starter Task List (ordered by context needed)
+
+| Task | Area | Context Needed | Good For |
+|------|------|----------------|----------|
+| Add JSDoc comments to exported functions in `@stellaragent/core` | SDK | Low — read existing JSDoc patterns | First-time OSS contributors |
+| Improve mobile responsiveness of the agent table in dashboard | Dashboard | Low — CSS/Tailwind only | Frontend newcomers |
+| Write unit tests for `RateLimiter` contract | Contracts | Medium — Rust + Soroban basics | Rust learners |
+| Add a tutorial for deploying contracts to testnet | Docs | Medium — walk through deploy script | Technical writers |
+| Add integration tests for `packages/core/src/math` helpers | SDK | Medium — Vitest + determinism fixtures | Test enthusiasts |
+| Extend CLI with a new read-only command (e.g., `stellaragent channel list`) | CLI | High — Commander.js + SDK internals | CLI tool builders |
+| Add a new dashboard panel for escrow job metrics | Dashboard | High — React + `@stellaragent/react` hooks | Full-stack contributors |
+
+> **Tip:** Tasks at the top need the least context. Pick one, comment on the issue, and start there.
+
+### How to Claim an Issue
+
+1. **Comment on the issue** — Say "I'll take this" or "Working on this" so others know it's claimed.
+2. **Assign yourself** — If you have write access, use the GitHub assignee field. If not, a maintainer will assign you after your comment.
+3. **Open a draft PR early** — Push a work-in-progress PR within 3–5 days so we can give early feedback.
+4. **Ask for help** — Stuck? Tag `@maintainer` in the PR or post in `#contributors` on Discord.
+
+### Stale Issue Policy
+
+- **No activity for 14 days** — Maintainer will ping the assignee.
+- **No activity for 30 days** — Issue is unassigned and back in the pool. The original claimant is welcome to pick it up again.
+- **Label `stale`** — Applied automatically after 21 days of inactivity via GitHub Actions. A comment from anyone removes it.
+
+---
+
+## Response Time Commitments
+
+| Event | Target First Response |
+|-------|----------------------|
+| New `good first issue` / `help wanted` issue | **2 business days** |
+| New PR from first-time contributor | **3 business days** |
+| Draft PR marked "Ready for review" | **2 business days** |
+| Question in `#contributors` Discord channel | **1 business day** (best effort) |
+
+Maintainers aim to meet these targets. If we miss one, nudge us — we appreciate it.
+
+---
+
+## Where to Get Help
+
+| Channel | Purpose |
+|---------|---------|
+| **GitHub Issue** | Bug reports, feature requests, design discussions |
+| **GitHub Discussion** | Open-ended questions, RFCs, "how do I…?" |
+| **Discord `#contributors`** | Real-time help, pairing, stuck-on-something-now |
+| **Tag `@stellaragent/maintainers`** | Escalate a stalled PR or issue |
+
+**Named contacts** (as of this writing):
+- **Lead maintainer**: [@maintainer-github-handle](https://github.com/maintainer-github-handle)
+- **Community liaison**: [@community-github-handle](https://github.com/community-github-handle)
+
+> If you don't know who to ping, post in `#contributors` on Discord — someone will route you.
+
+---
+
+## Python SDK release checklist
+
+- [ ] Bump `version` in `python/pyproject.toml`
+- [ ] `cd python && pytest -q && mypy && ruff check ..`
+- [ ] `git tag sdk-python-v<version> && git push --tags`
 
 ---
 
 ## Questions?
 
-Open a [GitHub Discussion](https://github.com/yourusername/stellaragent/discussions) or join our [Discord](https://discord.gg/stellaragent).
+Open a [GitHub Discussion](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/discussions) or an issue on the [tracker](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/issues).
