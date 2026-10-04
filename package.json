@@ -10,25 +10,49 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "test": "turbo run test",
+    "test": "bash ./scripts/test-all.sh",
+    "test:packages": "turbo run test",
+    "test:all": "bash ./scripts/test-all.sh",
     "test:coverage": "turbo run test:coverage",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "deploy:contracts": "tsx scripts/deploy.ts",
+    "devnet:up": "tsx scripts/devnet.ts up",
+    "devnet:down": "tsx scripts/devnet.ts down",
+    "devnet:wait": "tsx scripts/devnet.ts wait",
+    "devnet:fund": "tsx scripts/devnet.ts fund",
+    "devnet:seed": "tsx scripts/seed.ts",
+    "test:e2e": "tsx scripts/run-e2e.ts",
+    "devnet:harness": "tsx scripts/run-e2e.ts --all",
     "fixtures:generate": "tsx scripts/generate-fixtures.ts",
     "fixtures:check": "tsx scripts/generate-fixtures.ts --check",
+    "fixtures:test": "node scripts/generate-fixtures.test.mjs",
     "contracts:specs:generate": "cd contracts && ./generate-specs.sh",
     "contracts:specs:check": "cd contracts && ./generate-specs.sh --check",
     "contract-types:generate": "tsx scripts/generate-contract-types.ts",
     "contract-types:check": "tsx scripts/generate-contract-types.ts --check",
+    "contract-responses:check": "node scripts/check-contract-response-fixtures.mjs",
     "docs:api": "tsx scripts/check-public-api.ts && tsx scripts/generate-api-docs.ts",
-    "docs:api:check": "tsx scripts/check-public-api.ts --check && tsx scripts/generate-api-docs.ts --check"
+    "docs:api:check": "tsx scripts/check-public-api.ts --check && tsx scripts/generate-api-docs.ts --check",
+    "prepare": "husky install"
   },
   "devDependencies": {
-    "tsx": "^4.19.0",
-    "turbo": "^2.0.0",
+    "tsx": "^4.23.15",
+    "turbo": "^2.11.5",
     "typedoc": "^0.28.20",
-    "typedoc-plugin-markdown": "^4.13.0"
+    "typedoc-plugin-markdown": "^4.13.1",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{py}": [
+      "ruff check --fix",
+      "ruff format"
+    ]
   },
   "engines": {
     "node": ">=18"

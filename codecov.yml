@@ -1,0 +1,50 @@
+# Codecov configuration. Reports are uploaded from .github/workflows/ci.yml:
+#   - core-math:  packages/core/src/math, from the `math-coverage` job
+#   - typescript: every TS package with a test suite, from the `coverage` job
+#   - python:     the Python SDK, from the `python` job (3.12 only)
+#
+# Codecov is informational. The only blocking coverage check is the 100% gate
+# on packages/core/src/math, enforced by vitest thresholds in
+# packages/core/vitest.config.ts; nothing here can fail a PR.
+
+codecov:
+  require_ci_to_pass: false
+
+coverage:
+  precision: 2
+  round: down
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+flags:
+  core-math:
+    paths:
+      - packages/core/src/math/
+    carryforward: true
+  typescript:
+    paths:
+      - packages/
+      - integrations/
+    carryforward: true
+  python:
+    paths:
+      - python/src/
+    carryforward: true
+
+# Posted on every PR: how the diff is covered, the per-flag movement, and
+# the files whose coverage changed.
+comment:
+  layout: 'condensed_header, diff, flags, files'
+  behavior: default
+  require_changes: false
+
+ignore:
+  - '**/generated/**'
+  - '**/__tests__/**'
+  - '**/*.test.ts'
+  - '**/*.spec.ts'

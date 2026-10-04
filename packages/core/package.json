@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:coverage:full": "vitest run --coverage --config vitest.coverage.config.ts",
     "benchmark:fleet": "tsx scripts/benchmark-fleet.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",

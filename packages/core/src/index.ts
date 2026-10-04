@@ -2,6 +2,14 @@
 // concrete implementation lives in a dedicated module and is re-exported
 // here. See docs/architecture/core-modules.md for the module map and the
 // reasoning behind it.
+import {
+  runCall,
+  abortable,
+  sleep,
+  throwIfAborted,
+  DEFAULT_TIMEOUT_MS,
+  type CallOptions,
+} from './abort';
 
 // ─── Deterministic math (re-exported for consumers) ──────────────────────────
 export * as math from './math/index.js';
@@ -141,6 +149,7 @@ export type {
   AgentInfo,
   OpenChannelParams,
   PayForAPIParams,
+  PredictPaymentParams,
   ChannelInfo,
   SpendReport,
   JobStatus,

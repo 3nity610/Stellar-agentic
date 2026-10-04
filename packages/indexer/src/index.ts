@@ -87,10 +87,21 @@ export {
 } from "./progress.js";
 export {
   EventStore,
+  InMemoryEventStore,
+  createEventStore,
   type ChannelSpend,
+  type IEventStore,
   type JobLifecycle,
   type LedgerQuery,
 } from "./store.js";
+export {
+  Logger,
+  createLogger,
+  logger,
+  type LogEntry,
+  type LogLevel,
+  type LoggerOptions,
+} from "./logger.js";
 export type {
   ContractAddresses,
   ContractKind,

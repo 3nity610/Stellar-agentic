@@ -253,3 +253,69 @@ Deployments built before this change do not contain those snapshot events.
 Their action audit trail remains fully queryable, but fields that were never in
 the old payloads (channel token/period, job deadline/task/result, rate-limit
 configuration, and agent name) cannot be recovered historically.
+
+## Backfilling from a historical ledger
+
+`stellaragent-indexer catch-up --from-ledger 1200000` pages through history from
+that ledger (resumable via the persisted checkpoint), then `--tail` composes with
+it: catch up first, then follow the head. `INDEXER_FROM_LEDGER` sets the same
+starting point from the environment.
+
+## Environment Variables Reference
+
+The following environment variables configure the indexer runtime, database paths, RPC connection, polling cadence, and API endpoints:
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `SOROBAN_RPC_URL` | **Yes** | — | RPC endpoint of the Soroban network (e.g. `http://localhost:8000/soroban/rpc` or Testnet RPC) |
+| `INDEXER_START_LEDGER` | **Yes** | — | Starting ledger sequence number for initial historical catch-up |
+| `INDEXER_FROM_LEDGER` | Optional | — | Historical ledger sequence number to backfill from (replaces events from checkpoint) |
+| `INDEXER_DEPLOYMENT_FILE` | Optional | — | Path to JSON deployment manifest specifying contract addresses |
+| `PAYMENT_CHANNEL_CONTRACT` | Conditional | — | Address of Payment Channel contract (required if not in deployment file) |
+| `ESCROW_CONTRACT` | Conditional | — | Address of Escrow contract (required if not in deployment file) |
+| `RATE_LIMITER_CONTRACT` | Conditional | — | Address of Rate Limiter contract (required if not in deployment file) |
+| `AGENT_WALLET_FACTORY_CONTRACT` | Conditional | — | Address of Agent Wallet Factory contract (required if not in deployment file) |
+| `INDEXER_DATABASE` | Optional | `stellaragent-events.sqlite` | Filepath or connection string for the SQLite audit database |
+| `REPORT_DATABASE` | Optional | `${INDEXER_DATABASE}.reports` | Filepath for the SQLite report delivery and scheduling database |
+| `INDEXER_ROLLBACK_WINDOW` | Optional | `12` | Reorg window depth (number of ledgers re-verified and replaced per poll) |
+| `INDEXER_FINALITY_LAG` | Optional | `1` | Number of ledgers to hold back from the chain head to ensure finality |
+| `INDEXER_POLL_INTERVAL_MS` | Optional | `5000` | Polling frequency for live tailing in milliseconds |
+| `PORT` | Optional | `3001` | HTTP port on which the query and metrics API server listens |
+| `AUDIT_API_CORS_ORIGIN` | Optional | `*` | `Access-Control-Allow-Origin` header for browser and dashboard access |
+| `REPORT_WORKER_ENABLED` | Optional | `true` | Enables background worker processing scheduled audit reports |
+| `REPORT_POLL_INTERVAL_MS` | Optional | `5000` | Polling frequency for scheduled report deliveries |
+| `REPORT_EMAIL_GATEWAY_URL` | Optional | — | HTTPS webhook or gateway URL used to dispatch statement emails |
+| `REPORT_EMAIL_GATEWAY_TOKEN` | Optional | — | Bearer authentication token for the email dispatch gateway |
+| `LOG_LEVEL` / `INDEXER_LOG_LEVEL` | Optional | `info` | Logging verbosity: `debug`, `info`, `warn`, or `error` |
+
+## Docker and Operations
+
+A multi-stage Dockerfile and Docker Compose configuration are provided in `packages/indexer` to run the indexer as an isolated container service:
+
+### Building and Running with Docker
+
+```bash
+# Build the image from monorepo root
+docker build -t stellaragent-indexer -f packages/indexer/Dockerfile .
+
+# Run container with volume mounted for persistent SQLite storage
+docker run -d \
+  --name stellaragent-indexer \
+  -p 3001:3001 \
+  -v indexer-data:/data \
+  -e SOROBAN_RPC_URL=http://host.docker.internal:8000/soroban/rpc \
+  -e INDEXER_START_LEDGER=100 \
+  -e PAYMENT_CHANNEL_CONTRACT=CA... \
+  -e ESCROW_CONTRACT=CB... \
+  -e RATE_LIMITER_CONTRACT=CC... \
+  -e AGENT_WALLET_FACTORY_CONTRACT=CD... \
+  stellaragent-indexer
+```
+
+### Running with Docker Compose
+
+```bash
+cd packages/indexer
+docker compose up -d
+```
+

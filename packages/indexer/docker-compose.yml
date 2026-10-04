@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  stellaragent-indexer:
+    build:
+      context: ../..
+      dockerfile: packages/indexer/Dockerfile
+    container_name: stellaragent-indexer
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3001}:3001"
+    environment:
+      - SOROBAN_RPC_URL=${SOROBAN_RPC_URL:-http://host.docker.internal:8000/soroban/rpc}
+      - INDEXER_START_LEDGER=${INDEXER_START_LEDGER:-1}
+      - INDEXER_DATABASE=/data/stellaragent-events.sqlite
+      - REPORT_DATABASE=/data/stellaragent-reports.sqlite
+      - PORT=3001
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - PAYMENT_CHANNEL_CONTRACT=${PAYMENT_CHANNEL_CONTRACT:-}
+      - ESCROW_CONTRACT=${ESCROW_CONTRACT:-}
+      - RATE_LIMITER_CONTRACT=${RATE_LIMITER_CONTRACT:-}
+      - AGENT_WALLET_FACTORY_CONTRACT=${AGENT_WALLET_FACTORY_CONTRACT:-}
+      - INDEXER_ROLLBACK_WINDOW=${INDEXER_ROLLBACK_WINDOW:-12}
+      - INDEXER_FINALITY_LAG=${INDEXER_FINALITY_LAG:-1}
+      - INDEXER_POLL_INTERVAL_MS=${INDEXER_POLL_INTERVAL_MS:-5000}
+      - REPORT_WORKER_ENABLED=${REPORT_WORKER_ENABLED:-true}
+      - AUDIT_API_CORS_ORIGIN=${AUDIT_API_CORS_ORIGIN:-*}
+    volumes:
+      - indexer-data:/data
+    healthcheck:
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - stellaragent-network
+
+volumes:
+  indexer-data:
+    driver: local
+
+networks:
+  stellaragent-network:
+    driver: bridge

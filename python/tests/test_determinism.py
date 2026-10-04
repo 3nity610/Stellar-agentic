@@ -27,6 +27,7 @@ from stellaragent import fixed_point as fp
 from stellaragent import routing as routing_mod
 from stellaragent.bid import AgentBid, BidWeights
 from stellaragent.fixed_point import FixedPointError, _format, _quantize
+from stellaragent.math import predict as predict_mod
 from stellaragent.routing import RoutingPolicy
 
 # ─── Fixture loading ─────────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ def _load() -> dict:
             f"Shared fixtures missing at {FIXTURES_PATH}.\n"
             "Generate them from the TypeScript implementation: pnpm fixtures:generate"
         )
-    return json.loads(FIXTURES_PATH.read_text())
+    return json.loads(FIXTURES_PATH.read_text(encoding="utf-8"))
 
 
 FIXTURES = _load()
@@ -309,3 +310,80 @@ def test_route_ranking_is_order_independent(case: dict) -> None:
     assert [(entry.id, entry.score) for entry in forward] == [
         (entry.id, entry.score) for entry in reverse
     ]
+
+# ─── payment-outcome prediction parity ─────────────────────────────────────
+
+
+def test_predict_fixture_section_is_populated() -> None:
+    assert len(FIXTURES["predict"]["cases"]) > 20
+    assert len(FIXTURES["predict"]["windows"]) >= 6
+
+
+def _channel(raw: dict | None) -> predict_mod.ChannelSpendState | None:
+    if raw is None:
+        return None
+    return predict_mod.ChannelSpendState(
+        active=raw["active"],
+        limit_per_period=raw["limitPerPeriod"],
+        spent_this_period=raw["spentThisPeriod"],
+        period_start_ledger=raw["periodStartLedger"],
+        period=raw["period"],
+    )
+
+
+def _rate_limit(raw: dict | None) -> predict_mod.RateLimitSpendState | None:
+    if raw is None:
+        return None
+    return predict_mod.RateLimitSpendState(
+        configured=raw["configured"],
+        active=raw["active"],
+        max_per_tx=raw["maxPerTx"],
+        max_per_hour=raw["maxPerHour"],
+        max_per_day=raw["maxPerDay"],
+        max_txs_per_hour=raw["maxTxsPerHour"],
+        hourly_spend=raw["hourlySpend"],
+        daily_spend=raw["dailySpend"],
+        hourly_tx_count=raw["hourlyTxCount"],
+        hour_window_start_ledger=raw["hourWindowStartLedger"],
+        day_window_start_ledger=raw["dayWindowStartLedger"],
+    )
+
+
+@pytest.mark.parametrize(
+    "case", FIXTURES["predict"]["cases"], ids=lambda c: c["id"]
+)
+def test_predict_payment_outcome_matches_typescript(case: dict) -> None:
+    params = case["params"]
+    result = predict_mod.predict_payment_outcome(
+        predict_mod.PredictPaymentOutcomeParams(
+            amount=params["amount"],
+            current_ledger=params["currentLedger"],
+            channel_state=_channel(params.get("channelState")),
+            rate_limit_state=_rate_limit(params.get("rateLimitState")),
+        )
+    )
+    assert result.would_block is case["expect"]["wouldBlock"], (
+        f"{case['id']} wouldBlock\n"
+        f"  TypeScript: {case['expect']['wouldBlock']}\n"
+        f"  Python:     {result.would_block}"
+    )
+    assert result.reasons == case["expect"]["reasons"], (
+        f"{case['id']} reasons\n"
+        f"  TypeScript: {case['expect']['reasons']}\n"
+        f"  Python:     {result.reasons}\n"
+        "  Order matters - most upstream check first."
+    )
+
+
+@pytest.mark.parametrize(
+    "case", FIXTURES["predict"]["windows"], ids=lambda c: c["fn"] + str(c["args"])
+)
+def test_window_helpers_match_typescript(case: dict) -> None:
+    if case["fn"] == "isWindowExpired":
+        actual = predict_mod.is_window_expired(*case["args"])
+    elif case["fn"] == "ledgersRemainingInWindow":
+        actual = predict_mod.ledgers_remaining_in_window(*case["args"])
+    else:
+        raise AssertionError(f"unknown window helper: {case['fn']}")
+    assert actual == case["expect"]
+

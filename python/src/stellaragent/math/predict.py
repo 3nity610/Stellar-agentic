@@ -22,6 +22,18 @@ def is_window_expired(window_start: int, ledgers_per_window: int, current_ledger
     return current_ledger >= window_start + ledgers_per_window
 
 
+def ledgers_remaining_in_window(
+    window_start: int, ledgers_per_window: int, current_ledger: int
+) -> int:
+    """Ledgers left before a rolling window resets, floored at 0.
+
+    Mirrors ``ledgersRemainingInWindow`` in ``predict.ts``. An expired
+    window reports 0 remaining, never a negative count.
+    """
+    remaining = window_start + ledgers_per_window - current_ledger
+    return remaining if remaining > 0 else 0
+
+
 @dataclass
 class ChannelSpendState:
     active: bool
@@ -81,24 +93,29 @@ def predict_payment_outcome(params: PredictPaymentOutcomeParams) -> PaymentPredi
 
     if params.rate_limit_state and params.rate_limit_state.configured:
         rl = params.rate_limit_state
-        if amt > _d(rl.max_per_tx):
-            reasons.append("rate_limit_per_tx")
+        # `check`: `if !limit.active { return false; }` — a killed agent is
+        # blocked outright, before any numeric limit comparison.
+        if not rl.active:
+            reasons.append("rate_limit_inactive")
+        else:
+            if amt > _d(rl.max_per_tx):
+                reasons.append("rate_limit_per_tx")
 
-        hour_expired = is_window_expired(
-            rl.hour_window_start_ledger, RATE_LIMIT_LEDGERS_PER_HOUR, params.current_ledger
-        )
-        day_expired = is_window_expired(
-            rl.day_window_start_ledger, RATE_LIMIT_LEDGERS_PER_DAY, params.current_ledger
-        )
-        hourly_spend = _d("0") if hour_expired else _d(rl.hourly_spend)
-        daily_spend = _d("0") if day_expired else _d(rl.daily_spend)
-        hourly_tx_count = 0 if hour_expired else rl.hourly_tx_count
+            hour_expired = is_window_expired(
+                rl.hour_window_start_ledger, RATE_LIMIT_LEDGERS_PER_HOUR, params.current_ledger
+            )
+            day_expired = is_window_expired(
+                rl.day_window_start_ledger, RATE_LIMIT_LEDGERS_PER_DAY, params.current_ledger
+            )
+            hourly_spend = _d("0") if hour_expired else _d(rl.hourly_spend)
+            daily_spend = _d("0") if day_expired else _d(rl.daily_spend)
+            hourly_tx_count = 0 if hour_expired else rl.hourly_tx_count
 
-        if hourly_spend + amt > _d(rl.max_per_hour):
-            reasons.append("rate_limit_hourly")
-        if daily_spend + amt > _d(rl.max_per_day):
-            reasons.append("rate_limit_daily")
-        if hourly_tx_count >= rl.max_txs_per_hour:
-            reasons.append("rate_limit_tx_count")
+            if hourly_spend + amt > _d(rl.max_per_hour):
+                reasons.append("rate_limit_hourly")
+            if daily_spend + amt > _d(rl.max_per_day):
+                reasons.append("rate_limit_daily")
+            if hourly_tx_count >= rl.max_txs_per_hour:
+                reasons.append("rate_limit_tx_count")
 
     return PaymentPrediction(would_block=len(reasons) > 0, reasons=reasons)

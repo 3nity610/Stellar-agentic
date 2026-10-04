@@ -1,0 +1,19 @@
+# Default reviewer for areas without a more specific owner.
+* @Edoscoba
+
+# Smart contracts and zero-knowledge circuits.
+/contracts/ @Edoscoba
+/zk/ @Edoscoba
+
+# TypeScript SDKs and CLI.
+/packages/core/ @Nanle-code
+/packages/react/ @Nanle-code
+/packages/cli/ @Nanle-code
+
+# Dashboard and Python SDK.
+/dashboard/ @Enniwealth
+/python/ @Enniwealth
+
+# CI, repository configuration, and documentation.
+/.github/ @Edoscoba
+/docs/ @Edoscoba
