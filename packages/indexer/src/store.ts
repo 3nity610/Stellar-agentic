@@ -69,7 +69,43 @@ function participants(event: DecodedEvent): Array<[string, string]> {
   return result;
 }
 
-export class EventStore {
+/**
+ * Storage interface for the Soroban event indexer and query API.
+ *
+ * Implemented by `EventStore` (durable SQLite persistence) and
+ * `InMemoryEventStore` (ephemeral in-memory implementation for tests,
+ * conformance, and lightweight environments).
+ */
+export interface IEventStore {
+  close(): void;
+  checkpoint(stream?: string): number | undefined;
+  replaceRange(
+    fromLedger: number,
+    throughLedger: number,
+    events: DecodedEvent[],
+    stream?: string,
+  ): void;
+  recordTransactionFees(fees: TransactionFee[]): void;
+  ledgerEntries(query?: LedgerQuery): LedgerEntry[];
+  iterateLedgerEntries(
+    query?: Omit<LedgerQuery, "limit" | "offset">,
+    batchSize?: number,
+  ): Generator<LedgerEntry>;
+  ledgerIssues(): LedgerIssue[];
+  reconcile(request: ReconciliationRequest): ReconciliationResult;
+  statement(request: StatementRequest): Statement;
+  eventsForAgent(address: string): StoredEvent[];
+  spendHistory(channelId: string): ChannelSpend;
+  jobLifecycle(jobId: string): JobLifecycle;
+  allEvents(limit?: number, offset?: number): StoredEvent[];
+  eventCount(): number;
+  channelState(channelId: string): unknown | undefined;
+  jobState(jobId: string): unknown | undefined;
+  rateLimitState(agent: string): unknown | undefined;
+  agentInfoState(agentId: string): unknown | undefined;
+}
+
+export class EventStore implements IEventStore {
   private readonly db: Database.Database;
 
   constructor(filename = "stellaragent-events.sqlite") {
@@ -622,3 +658,278 @@ export class EventStore {
     }));
   }
 }
+
+/**
+ * Pure in-memory implementation of `IEventStore`.
+ *
+ * Provides the identical interface and query semantics as `EventStore` without
+ * native SQLite bindings, suitable for testing, ephemeral pipelines, and
+ * conformance verification.
+ */
+export class InMemoryEventStore implements IEventStore {
+  private readonly events = new Map<string, StoredEvent>();
+  private readonly participants = new Map<string, Array<{ address: string; role: string }>>();
+  private readonly checkpoints = new Map<string, number>();
+  private readonly fees = new Map<string, TransactionFee & { asset?: string }>();
+  private cachedEntries: LedgerEntry[] = [];
+  private cachedIssues: LedgerIssue[] = [];
+
+  close(): void {
+    // No-op for in-memory store
+  }
+
+  checkpoint(stream = "stellaragent"): number | undefined {
+    return this.checkpoints.get(stream);
+  }
+
+  replaceRange(
+    fromLedger: number,
+    throughLedger: number,
+    events: DecodedEvent[],
+    stream = "stellaragent",
+  ): void {
+    if (throughLedger < fromLedger) return;
+
+    for (const [id, event] of this.events.entries()) {
+      if (event.ledger >= fromLedger && event.ledger <= throughLedger) {
+        this.events.delete(id);
+        this.participants.delete(id);
+      }
+    }
+
+    for (const [hash, fee] of this.fees.entries()) {
+      if (fee.ledger >= fromLedger && fee.ledger <= throughLedger) {
+        this.fees.delete(hash);
+      }
+    }
+
+    for (const event of events) {
+      if (event.ledger < fromLedger || event.ledger > throughLedger) continue;
+      const target = entity(event);
+      const stored: StoredEvent = {
+        eventId: event.eventId,
+        contractKind: event.contractKind,
+        contractAddress: event.contractAddress,
+        ledger: event.ledger,
+        ledgerClosedAt: event.ledgerClosedAt,
+        txHash: event.txHash,
+        pagingToken: event.pagingToken,
+        namespace: event.namespace,
+        action: event.action,
+        entityType: target.type,
+        entityId: target.id,
+        payload: event,
+      };
+      this.events.set(event.eventId, stored);
+      this.participants.set(
+        event.eventId,
+        participants(event).map(([address, role]) => ({ address, role })),
+      );
+    }
+
+    this.checkpoints.set(stream, throughLedger + 1);
+    this.rebuildLedger();
+  }
+
+  recordTransactionFees(fees: TransactionFee[]): void {
+    for (const fee of fees) {
+      const charged = BigInt(fee.charged);
+      if (charged < 0n) throw new Error(`fee ${fee.txHash} must not be negative`);
+      if (!Number.isSafeInteger(fee.ledger) || fee.ledger < 0) {
+        throw new Error(`fee ${fee.txHash} has an invalid ledger`);
+      }
+      this.fees.set(fee.txHash, { ...fee });
+    }
+    this.rebuildLedger();
+  }
+
+  ledgerEntries(query: LedgerQuery = {}): LedgerEntry[] {
+    const limit = query.limit ?? 10_000;
+    const offset = query.offset ?? 0;
+    if (!Number.isSafeInteger(limit) || limit < 0 || limit > 100_000) {
+      throw new Error("ledger query limit must be between 0 and 100000");
+    }
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new Error("ledger query offset must be a non-negative integer");
+    }
+
+    const filtered = this.cachedEntries.filter((entry) => {
+      if (query.fromLedger !== undefined && entry.ledger < query.fromLedger) return false;
+      if (query.throughLedger !== undefined && entry.ledger > query.throughLedger) return false;
+      if (query.agent !== undefined && entry.agent !== query.agent) return false;
+      if (query.owner !== undefined && entry.owner !== query.owner) return false;
+      if (query.account !== undefined && !entry.postings.some((p) => p.account === query.account)) return false;
+      if (query.asset !== undefined && !entry.postings.some((p) => p.asset === query.asset)) return false;
+      if (query.kinds?.length && !query.kinds.includes(entry.kind)) return false;
+      return true;
+    });
+
+    return filtered.slice(offset, offset + limit);
+  }
+
+  *iterateLedgerEntries(
+    query: Omit<LedgerQuery, "limit" | "offset"> = {},
+    batchSize = 10_000,
+  ): Generator<LedgerEntry> {
+    if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 100_000) {
+      throw new Error("ledger iteration batchSize must be between 1 and 100000");
+    }
+    let offset = 0;
+    while (true) {
+      const batch = this.ledgerEntries({ ...query, limit: batchSize, offset });
+      yield* batch;
+      if (batch.length < batchSize) return;
+      offset += batch.length;
+    }
+  }
+
+  ledgerIssues(): LedgerIssue[] {
+    return [...this.cachedIssues];
+  }
+
+  reconcile(request: ReconciliationRequest): ReconciliationResult {
+    return reconcileLedger(
+      [...this.iterateLedgerEntries({
+        ...(request.fromLedger === undefined ? {} : { fromLedger: request.fromLedger }),
+        throughLedger: request.asOfLedger,
+      })],
+      request,
+    );
+  }
+
+  statement(request: StatementRequest): Statement {
+    return buildStatement([...this.iterateLedgerEntries()], request);
+  }
+
+  eventsForAgent(address: string): StoredEvent[] {
+    const creatorAgentIds = new Set<string>();
+    for (const event of this.events.values()) {
+      if (event.namespace === "factory" && event.action === "created" && event.entityType === "agent" && event.entityId) {
+        const parts = this.participants.get(event.eventId) ?? [];
+        if (parts.some((p) => p.role === "agent" && p.address === address)) {
+          creatorAgentIds.add(event.entityId);
+        }
+      }
+    }
+
+    const matched: StoredEvent[] = [];
+    for (const event of this.events.values()) {
+      const parts = this.participants.get(event.eventId) ?? [];
+      const isParticipant = parts.some((p) => p.address === address);
+      const isCreatedAgent = event.entityType === "agent" && event.entityId !== null && creatorAgentIds.has(event.entityId);
+      if (isParticipant || isCreatedAgent) {
+        matched.push(event);
+      }
+    }
+    return matched.sort((a, b) => {
+      if (a.ledger !== b.ledger) return a.ledger - b.ledger;
+      return a.pagingToken.localeCompare(b.pagingToken);
+    });
+  }
+
+  spendHistory(channelId: string): ChannelSpend {
+    const payments = [...this.events.values()]
+      .filter((e) => e.entityType === "channel" && e.entityId === channelId && (e.action === "paid" || e.action === "convpaid"))
+      .sort((a, b) => {
+        if (a.ledger !== b.ledger) return a.ledger - b.ledger;
+        return a.pagingToken.localeCompare(b.pagingToken);
+      });
+    const total = payments.reduce(
+      (sum, event) => sum + BigInt((event.payload as { amount: string }).amount),
+      0n,
+    );
+    return { channelId, totalSpent: total.toString(), payments };
+  }
+
+  jobLifecycle(jobId: string): JobLifecycle {
+    const events = [...this.events.values()]
+      .filter((e) => e.entityType === "job" && e.entityId === jobId && e.namespace === "escrow")
+      .sort((a, b) => {
+        if (a.ledger !== b.ledger) return a.ledger - b.ledger;
+        return a.pagingToken.localeCompare(b.pagingToken);
+      });
+    let status: JobLifecycle["status"] = "Unknown";
+    for (const event of events) {
+      if (event.action === "created") status = "Open";
+      else if (event.action === "accepted") status = "InProgress";
+      else if (event.action === "result") status = "PendingRelease";
+      else if (event.action === "released") status = "Completed";
+      else if (event.action === "refunded") status = "Refunded";
+      else if (event.action === "disputed") status = "Disputed";
+    }
+    return { jobId, status, events };
+  }
+
+  allEvents(limit = 100, offset = 0): StoredEvent[] {
+    const sorted = [...this.events.values()].sort((a, b) => {
+      if (a.ledger !== b.ledger) return a.ledger - b.ledger;
+      return a.pagingToken.localeCompare(b.pagingToken);
+    });
+    return sorted.slice(offset, offset + limit);
+  }
+
+  eventCount(): number {
+    return this.events.size;
+  }
+
+  channelState(channelId: string): unknown | undefined {
+    return this.latestSnapshot("channel", "channel", channelId);
+  }
+
+  jobState(jobId: string): unknown | undefined {
+    return this.latestSnapshot("job", "job", jobId);
+  }
+
+  rateLimitState(agent: string): unknown | undefined {
+    return this.latestSnapshot("limit", "agent", agent);
+  }
+
+  agentInfoState(agentId: string): unknown | undefined {
+    return this.latestSnapshot("agent", "agent", agentId);
+  }
+
+  private latestSnapshot(
+    action: string,
+    entityType: string,
+    entityId: string,
+  ): unknown | undefined {
+    const matching = [...this.events.values()]
+      .filter(
+        (e) =>
+          e.namespace === "state" &&
+          e.action === action &&
+          e.entityType === entityType &&
+          e.entityId === entityId,
+      )
+      .sort((a, b) => {
+        if (a.ledger !== b.ledger) return b.ledger - a.ledger;
+        return b.pagingToken.localeCompare(a.pagingToken);
+      });
+    const event = matching[0];
+    return event && "state" in event.payload ? event.payload.state : undefined;
+  }
+
+  private rebuildLedger(): void {
+    const feeList = [...this.fees.values()].sort((a, b) => {
+      if (a.ledger !== b.ledger) return a.ledger - b.ledger;
+      return a.txHash.localeCompare(b.txHash);
+    });
+    const eventList = this.allEvents(1_000_000, 0);
+    const normalized = normalizeLedger(eventList, feeList);
+    this.cachedEntries = normalized.entries;
+    this.cachedIssues = normalized.issues;
+  }
+}
+
+/**
+ * Factory creating either a durable SQLite store or an ephemeral in-memory store.
+ */
+export function createEventStore(
+  type: "sqlite" | "memory" = "sqlite",
+  pathOrName = "stellaragent-events.sqlite",
+): IEventStore {
+  return type === "memory"
+    ? new InMemoryEventStore()
+    : new EventStore(pathOrName);
+}
+

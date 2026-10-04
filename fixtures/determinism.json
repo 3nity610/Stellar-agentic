@@ -12363,5 +12363,705 @@
         ]
       }
     ]
+  },
+  "predict": {
+    "cases": [
+      {
+        "id": "case-0",
+        "params": {
+          "amount": "0",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "invalid_amount"
+          ]
+        }
+      },
+      {
+        "id": "case-1",
+        "params": {
+          "amount": "-5",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "invalid_amount"
+          ]
+        }
+      },
+      {
+        "id": "case-2",
+        "params": {
+          "amount": "5",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-3",
+        "params": {
+          "channelState": {
+            "active": false,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "0",
+            "periodStartLedger": 1000,
+            "period": "hourly"
+          },
+          "amount": "1",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "channel_inactive"
+          ]
+        }
+      },
+      {
+        "id": "case-4",
+        "params": {
+          "channelState": {
+            "active": false,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "9999",
+            "periodStartLedger": 1000,
+            "period": "hourly"
+          },
+          "amount": "500",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "channel_inactive"
+          ]
+        }
+      },
+      {
+        "id": "case-5",
+        "params": {
+          "channelState": {
+            "active": true,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "1000",
+            "periodStartLedger": 1000,
+            "period": "hourly"
+          },
+          "amount": "500",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-6",
+        "params": {
+          "channelState": {
+            "active": true,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "9500",
+            "periodStartLedger": 1000,
+            "period": "hourly"
+          },
+          "amount": "500",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-7",
+        "params": {
+          "channelState": {
+            "active": true,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "9500",
+            "periodStartLedger": 1000,
+            "period": "hourly"
+          },
+          "amount": "501",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "channel_spend_limit"
+          ]
+        }
+      },
+      {
+        "id": "case-8",
+        "params": {
+          "channelState": {
+            "active": true,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "9999",
+            "periodStartLedger": 1000,
+            "period": "hourly"
+          },
+          "amount": "5000",
+          "currentLedger": 1720
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-9",
+        "params": {
+          "channelState": {
+            "active": true,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "9999",
+            "periodStartLedger": 1000,
+            "period": "hourly"
+          },
+          "amount": "5000",
+          "currentLedger": 1719
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "channel_spend_limit"
+          ]
+        }
+      },
+      {
+        "id": "case-10",
+        "params": {
+          "channelState": {
+            "active": true,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "9999",
+            "periodStartLedger": 1000,
+            "period": "per_ledger"
+          },
+          "amount": "10000",
+          "currentLedger": 1001
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-11",
+        "params": {
+          "channelState": {
+            "active": true,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "9999",
+            "periodStartLedger": 1000,
+            "period": "daily"
+          },
+          "amount": "5000",
+          "currentLedger": 18279
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "channel_spend_limit"
+          ]
+        }
+      },
+      {
+        "id": "case-12",
+        "params": {
+          "channelState": {
+            "active": true,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "9999",
+            "periodStartLedger": 1000,
+            "period": "daily"
+          },
+          "amount": "5000",
+          "currentLedger": 18280
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-13",
+        "params": {
+          "rateLimitState": {
+            "configured": false,
+            "active": true,
+            "maxPerTx": "1",
+            "maxPerHour": "500",
+            "maxPerDay": "2000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "0",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "1000000",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-14",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "100",
+            "maxPerHour": "500",
+            "maxPerDay": "2000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "0",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "100",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-15",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "100",
+            "maxPerHour": "500",
+            "maxPerDay": "2000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "0",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "101",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "rate_limit_per_tx"
+          ]
+        }
+      },
+      {
+        "id": "case-16",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "1000",
+            "maxPerHour": "500",
+            "maxPerDay": "100000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "480",
+            "dailySpend": "480",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "30",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "rate_limit_hourly"
+          ]
+        }
+      },
+      {
+        "id": "case-17",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "1000",
+            "maxPerHour": "500",
+            "maxPerDay": "100000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "480",
+            "dailySpend": "480",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "20",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-18",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "1000",
+            "maxPerHour": "100000",
+            "maxPerDay": "500",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "480",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "30",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "rate_limit_daily"
+          ]
+        }
+      },
+      {
+        "id": "case-19",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "1000",
+            "maxPerHour": "100000",
+            "maxPerDay": "500",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "480",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "20",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-20",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "100",
+            "maxPerHour": "500",
+            "maxPerDay": "2000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "0",
+            "hourlyTxCount": 9,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "1",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-21",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "100",
+            "maxPerHour": "500",
+            "maxPerDay": "2000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "0",
+            "hourlyTxCount": 10,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "1",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "rate_limit_tx_count"
+          ]
+        }
+      },
+      {
+        "id": "case-22",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "100",
+            "maxPerHour": "500",
+            "maxPerDay": "2000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "499",
+            "dailySpend": "0",
+            "hourlyTxCount": 10,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "100",
+          "currentLedger": 1720
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-23",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "100",
+            "maxPerHour": "500",
+            "maxPerDay": "2000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "499",
+            "dailySpend": "0",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "100",
+          "currentLedger": 1719
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "rate_limit_hourly"
+          ]
+        }
+      },
+      {
+        "id": "case-24",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "100",
+            "maxPerHour": "500",
+            "maxPerDay": "500",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "499",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "100",
+          "currentLedger": 18280
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-25",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": false,
+            "maxPerTx": "100",
+            "maxPerHour": "500",
+            "maxPerDay": "2000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "0",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "50",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      },
+      {
+        "id": "case-26",
+        "params": {
+          "rateLimitState": {
+            "configured": true,
+            "active": false,
+            "maxPerTx": "100",
+            "maxPerHour": "500",
+            "maxPerDay": "2000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "0",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "101",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "rate_limit_per_tx"
+          ]
+        }
+      },
+      {
+        "id": "case-27",
+        "params": {
+          "channelState": {
+            "active": true,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "9900",
+            "periodStartLedger": 1000,
+            "period": "hourly"
+          },
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "50",
+            "maxPerHour": "500",
+            "maxPerDay": "2000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "0",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "200",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": true,
+          "reasons": [
+            "channel_spend_limit",
+            "rate_limit_per_tx"
+          ]
+        }
+      },
+      {
+        "id": "case-28",
+        "params": {
+          "channelState": {
+            "active": true,
+            "limitPerPeriod": "10000",
+            "spentThisPeriod": "100",
+            "periodStartLedger": 1000,
+            "period": "hourly"
+          },
+          "rateLimitState": {
+            "configured": true,
+            "active": true,
+            "maxPerTx": "100",
+            "maxPerHour": "500",
+            "maxPerDay": "2000",
+            "maxTxsPerHour": 10,
+            "hourlySpend": "0",
+            "dailySpend": "0",
+            "hourlyTxCount": 0,
+            "hourWindowStartLedger": 1000,
+            "dayWindowStartLedger": 1000
+          },
+          "amount": "50",
+          "currentLedger": 1000
+        },
+        "expect": {
+          "wouldBlock": false,
+          "reasons": []
+        }
+      }
+    ],
+    "windows": [
+      {
+        "fn": "isWindowExpired",
+        "args": [
+          1000,
+          720,
+          1719
+        ],
+        "expect": false
+      },
+      {
+        "fn": "isWindowExpired",
+        "args": [
+          1000,
+          720,
+          1720
+        ],
+        "expect": true
+      },
+      {
+        "fn": "isWindowExpired",
+        "args": [
+          1000,
+          720,
+          5000
+        ],
+        "expect": true
+      },
+      {
+        "fn": "ledgersRemainingInWindow",
+        "args": [
+          1000,
+          720,
+          1700
+        ],
+        "expect": 20
+      },
+      {
+        "fn": "ledgersRemainingInWindow",
+        "args": [
+          1000,
+          720,
+          1720
+        ],
+        "expect": 0
+      },
+      {
+        "fn": "ledgersRemainingInWindow",
+        "args": [
+          1000,
+          720,
+          5000
+        ],
+        "expect": 0
+      }
+    ]
   }
 }

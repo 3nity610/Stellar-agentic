@@ -1,17 +1,20 @@
 [workspace]
 members = [
     "agent_wallet_factory",
+    "bug_bounty_oracle",
     "payment_channel",
     "escrow",
+    "reputation_registry",
     "rate_limiter",
     "circuit_breaker",
     "price_oracle",
     "amm_swap",
+    "governance",
 ]
 resolver = "2"
 
 [workspace.dependencies]
-soroban-sdk = { version = "22.0.0" }
+soroban-sdk = { version = "28.0.0" }
 
 [profile.release]
 opt-level = "z"

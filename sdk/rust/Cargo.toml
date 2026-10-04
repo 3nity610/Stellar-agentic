@@ -32,10 +32,10 @@ exclude = ["tests/"]
 
 [dependencies]
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 hex = "0.4"
-num-bigint = "0.4"
+num-bigint = "0.5"
 num-integer = "0.1"
 num-traits = "0.2"
 rand_core = { version = "0.6", features = ["getrandom"] }
@@ -43,7 +43,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-stellar-strkey = "0.0.13"
+stellar-strkey = "0.0.18"
 stellar-xdr = { version = "23", features = ["curr", "std", "base64"] }
 thiserror = "2"
 tokio = { version = "1", features = ["time"] }

@@ -17,6 +17,11 @@ Cargo.lock
 # from a dependency set someone reviewed, not from whatever crates.io published
 # the morning of the deploy.
 !services/signer/Cargo.lock
+# Same reason as the three above, and the same failure: soroban-env-host (a
+# dev-dependency, via payment_channel) declares ed25519-dalek ">=2.0.0", so an
+# unpinned resolve picks up 3.0.0 — which it does not compile against
+# (E0277, `ChaCha20Rng: CryptoRng`). zk/Cargo.lock pins it to 2.2.0.
+!zk/Cargo.lock
 test_snapshots/
 
 # Node
@@ -34,6 +39,8 @@ dist-ssr/
 
 # Test output
 coverage/
+coverage-full/
+coverage.xml
 playwright-report/
 test-results/
 blob-report/
@@ -65,3 +72,6 @@ venv/
 .ruff_cache/
 .coverage
 htmlcov/
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat

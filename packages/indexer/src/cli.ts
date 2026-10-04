@@ -11,6 +11,7 @@ import {
   type EmailSender,
 } from "./delivery.js";
 import { SorobanEventIndexer } from "./indexer.js";
+import { logger } from "./logger.js";
 import { EventStore } from "./store.js";
 
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -33,12 +34,12 @@ async function runReportWorker(
     try {
       const result = await service.tick();
       if (Object.values(result).some((value) => value > 0)) {
-        process.stdout.write(`Report worker ${JSON.stringify(result)}\n`);
+        logger.info("Report worker completed tick", { result });
       }
     } catch (error) {
-      process.stderr.write(
-        `Report worker tick failed: ${error instanceof Error ? error.message : String(error)}\n`,
-      );
+      logger.error("Report worker tick failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     await delay(pollIntervalMs, signal);
   }
@@ -52,15 +53,14 @@ async function main(): Promise<void> {
     );
   }
   const fromIndex = process.argv.indexOf("--from-ledger");
-  const fromLedger =
-    fromIndex === -1 ? undefined : Number(process.argv[fromIndex + 1]);
+  const config = loadEnvironment();
+  const fromLedger = fromIndex === -1 ? config.fromLedger : Number(process.argv[fromIndex + 1]);
   if (
     fromLedger !== undefined &&
     (!Number.isSafeInteger(fromLedger) || fromLedger < 1)
   ) {
     throw new Error("--from-ledger must be a positive integer");
   }
-  const config = loadEnvironment();
   const store = new EventStore(config.databasePath);
   const indexer = new SorobanEventIndexer({
     rpcUrl: config.rpcUrl,
@@ -73,9 +73,11 @@ async function main(): Promise<void> {
   });
 
   const result = await indexer.catchUp(fromLedger);
-  process.stdout.write(
-    `Indexed ${result.eventCount} events through ledger ${result.throughLedger}\n`,
-  );
+  logger.info("Catch-up completed", {
+    eventCount: result.eventCount,
+    throughLedger: result.throughLedger,
+    fromLedger: result.fromLedger,
+  });
   if (command === "catch-up") {
     store.close();
     return;
@@ -88,10 +90,11 @@ async function main(): Promise<void> {
     progress: () => indexer.progressReporter.snapshot(),
   });
   server.listen(config.port, () => {
-    process.stdout.write(`Audit API listening on http://localhost:${config.port}\n`);
-    process.stdout.write(
-      `Scrape health at /health and Prometheus metrics at /metrics on port ${config.port}\n`,
-    );
+    logger.info("Audit API server listening", {
+      port: config.port,
+      healthUrl: `http://localhost:${config.port}/health`,
+      metricsUrl: `http://localhost:${config.port}/metrics`,
+    });
   });
   const controller = new AbortController();
   const missingEmailGateway: EmailSender = {
@@ -113,16 +116,25 @@ async function main(): Promise<void> {
       email: new EmailReportTransport(emailSender),
     },
   });
-  const shutdown = (): void => {
+
+  let isShuttingDown = false;
+  const shutdown = (signalName: string): void => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    logger.info("Graceful shutdown initiated", { signal: signalName });
     controller.abort();
     indexer.stop();
+    const currentCheckpoint = store.checkpoint();
+    logger.info("Checkpoint verified on shutdown", { checkpoint: currentCheckpoint });
     server.close(() => {
       deliveryStore.close();
       store.close();
+      logger.info("Graceful shutdown complete, all resources closed");
     });
   };
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+
   await Promise.all([
     indexer.liveTail(controller.signal),
     ...(config.reportWorkerEnabled
@@ -136,8 +148,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.stack ?? error.message : String(error)}\n`,
-  );
+  logger.error("Fatal error during indexer execution", {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
   process.exitCode = 1;
 });
