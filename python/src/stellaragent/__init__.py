@@ -43,6 +43,13 @@ from .contracts import (
     is_deployed_address,
     resolve_contracts,
 )
+from .errors import (
+    CONTRACT_ERROR_MAPPINGS,
+    InvalidArgumentError,
+    StellarAgentError,
+    StellarAgentErrorCode,
+    contract_error,
+)
 from .fixed_point import (
     BPS_SCALE,
     DECIMAL_PLACES,
@@ -109,6 +116,12 @@ __all__ = [
     "__version__",
     # agent
     "StellarAgent",
+    # errors
+    "StellarAgentError",
+    "StellarAgentErrorCode",
+    "InvalidArgumentError",
+    "contract_error",
+    "CONTRACT_ERROR_MAPPINGS",
     # fixed point
     "BPS_SCALE",
     "DECIMAL_PLACES",

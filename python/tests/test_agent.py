@@ -19,7 +19,7 @@ from stellar_sdk import Keypair
 from stellar_sdk.exceptions import Ed25519SecretSeedInvalidError
 
 from stellaragent import StellarAgent
-from stellaragent.agent import DOCS_BASE
+from stellaragent.agent import InvocationResult
 from stellaragent.contracts import (
     CONTRACT_KEYS,
     UNCONFIGURED_CONTRACTS,
@@ -30,7 +30,7 @@ from stellaragent.contracts import (
     is_deployed_address,
     resolve_contracts,
 )
-from stellaragent.types import NETWORK_CONFIGS, PayForAPIParams, TxResult
+from stellaragent.types import NETWORK_CONFIGS, OpenChannelParams, PayForAPIParams, TxResult
 
 # Same deterministic test keypair the TypeScript suite uses, so both sides
 # assert against the same address.
@@ -310,15 +310,25 @@ class TestPayForAPI:
         with pytest.raises(ValueError, match="dest_asset and min_received must be set together"):
             agent.pay_for_api(PayForAPIParams(endpoint="https://x", amount="0.001", **params))
 
-    def test_accepts_both_together_and_falls_through_to_the_stub(self) -> None:
+    def test_accepts_both_together_and_invokes_contract(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         agent = make_agent()
         agent._active_channel_id = 1
-        with pytest.raises(NotImplementedError):
-            agent.pay_for_api(
-                PayForAPIParams(
-                    endpoint="https://x", amount="0.001", dest_asset="XLM", min_received="0.009"
-                )
+        monkeypatch.setattr(
+            agent,
+            "_invoke_contract",
+            lambda contract, method, args, read_only=False: InvocationResult(
+                value=None, tx=TxResult(hash="tx-hash", success=True, ledger=100)
+            ),
+        )
+        tx = agent.pay_for_api(
+            PayForAPIParams(
+                endpoint="https://x", amount="0.001", dest_asset="XLM", min_received="0.009"
             )
+        )
+        assert tx.hash == "tx-hash"
+        assert tx.success is True
 
 
 class TestGetBalance:
@@ -382,9 +392,23 @@ class TestUnimplementedSurface:
         with pytest.raises(NotImplementedError):
             call(make_agent())
 
-    def test_open_channel_points_at_the_contract(self) -> None:
-        with pytest.raises(NotImplementedError, match="payment_channel"):
-            make_agent().open_channel(None)
+    def test_open_channel_invokes_contract(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        agent = make_agent()
+        calls: list[tuple[str, str, Any]] = []
+        monkeypatch.setattr(
+            agent,
+            "_invoke_contract",
+            lambda contract, method, args, read_only=False: (
+                calls.append((contract, method, args)),
+                InvocationResult(value=42, tx=TxResult(hash="tx-hash", success=True, ledger=100)),
+            )[1],
+        )
+        channel_id = agent.open_channel(
+            OpenChannelParams(deposit="10", limit_per_period="1", period="hourly")
+        )
+        assert channel_id == 42
+        assert agent.active_channel_id == 42
+        assert calls[0][1] == "open_channel"
 
 
 # ─── Rate limit validation ────────────────────────────────────────────────────

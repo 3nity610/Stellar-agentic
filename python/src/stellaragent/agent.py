@@ -4,31 +4,36 @@ Tracks the TypeScript class's public API. Method names are ``snake_case``;
 everything else — arguments, semantics, validation order, error text — is
 deliberately the same, so an agent written against one SDK reads the same in
 the other.
-
-Current state
--------------
-Most contract-invoking methods are stubs that raise, exactly as their TS
-counterparts do. They are pending the companion "real Soroban invocation"
-work; porting them before the TS shape is settled would mean porting a design
-that is about to change. What *is* implemented here is everything the TS class
-implements today: identity, contract resolution and its fast-fail check,
-friendbot funding, :meth:`get_balance`, and the rate-limit trio
-(:meth:`set_rate_limits`, :meth:`check_rate_limit`, :meth:`get_rate_limit_status`).
-
-The deterministic math in :mod:`stellaragent.fixed_point` and
-:mod:`stellaragent.bid` is complete and verified byte-identical against the
-TypeScript implementation — that is the part of this package with a hard
-correctness requirement today.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import copy
+import time
+from collections.abc import Sequence
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, cast
 
-from stellar_sdk import Keypair, Server, SorobanServer
+from stellar_sdk import (
+    Account,
+    Address,
+    Asset,
+    InvokeHostFunction,
+    Keypair,
+    Server,
+    SorobanDataBuilder,
+    SorobanServer,
+    TransactionBuilder,
+    TransactionEnvelope,
+    scval,
+    xdr,
+)
+from stellar_sdk.auth import authorize_entry
 
 from .contracts import ContractAddresses, assert_deployed, resolve_contracts
-from .fixed_point import from_stroops, to_stroops
+from .errors import InvalidArgumentError, StellarAgentError, contract_error
+from .fixed_point import to_stroops
 from .types import (
     NETWORK_CONFIGS,
     UNCONFIGURED_RATE_LIMIT,
@@ -46,34 +51,186 @@ from .types import (
     TxResult,
 )
 
-#: Base for documentation links embedded in error messages. Mirrors the
-#: TypeScript SDK's ``DOCS_BASE`` (``packages/core/src/errors.ts``) so the two
-#: SDKs point a caller at the same page for the same failure.
-DOCS_BASE = (
-    "https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/blob/main/"
-)
+SorobanAuthorizationEntry = xdr.SorobanAuthorizationEntry
+SorobanCredentialsType = xdr.SorobanCredentialsType
+SorobanTransactionData = xdr.SorobanTransactionData
 
-__all__ = ["StellarAgent"]
+__all__ = ["StellarAgent", "InvocationResult"]
 
 FRIENDBOT_URL = "https://friendbot.stellar.org"
+
+
+@dataclass(frozen=True)
+class InvocationResult:
+    """The result of a Soroban contract invocation."""
+
+    value: Any
+    tx: TxResult
+
+
+class _InvokeContractAdapter:
+    def __init__(self, invoke_contract: Any) -> None:
+        self._invoke_contract = invoke_contract
+
+    def args(self) -> list[xdr.SCVal]:
+        return list(self._invoke_contract.args)
+
+    @property
+    def contract_address(self) -> Any:
+        return self._invoke_contract.contract_address
+
+    @property
+    def function_name(self) -> Any:
+        return self._invoke_contract.function_name
+
+
+class _FuncAdapter:
+    def __init__(self, host_fn: Any) -> None:
+        self._host_fn = host_fn
+
+    def invokeContract(self) -> _InvokeContractAdapter:
+        return _InvokeContractAdapter(self._host_fn.invoke_contract)
+
+    def invoke_contract(self) -> _InvokeContractAdapter:
+        return _InvokeContractAdapter(self._host_fn.invoke_contract)
+
+
+def spend_period_variant(period: str) -> str:
+    mapping = {
+        "per_ledger": "PerLedger",
+        "hourly": "Hourly",
+        "daily": "Daily",
+    }
+    if period not in mapping:
+        raise InvalidArgumentError(
+            "INVALID_ARGUMENT",
+            f"Invalid spend period '{period}'. Expected one of: {', '.join(sorted(mapping))}",
+        )
+    return mapping[period]
+
+
+def resolve_asset_contract(
+    asset: str,
+    asset_contracts: dict[str, str] | None,
+    network_passphrase: str,
+) -> str:
+    if asset == "XLM":
+        return Asset.native().contract_id(network_passphrase)
+    contracts = asset_contracts or {}
+    resolved = contracts.get(asset, asset)
+    try:
+        Address(resolved)
+        if not resolved.startswith("C"):
+            raise ValueError("not a contract")
+        return resolved
+    except Exception as exc:
+        raise InvalidArgumentError(
+            "INVALID_ARGUMENT",
+            f'Unknown asset "{asset}". Pass its C... token contract ID or configure assetContracts.{asset}.',
+            cause=exc,
+        ) from exc
+
+
+def _get_account(rpc: Any, address: str) -> Account:
+    for name in ("load_account", "get_account", "getAccount"):
+        fn = getattr(rpc, name, None)
+        if callable(fn):
+            acc: Any = fn(address)
+            if isinstance(acc, Account):
+                acc.sequence = int(acc.sequence)
+                return acc
+            if hasattr(acc, "sequence"):
+                seq = int(acc.sequence)
+                return Account(address, seq)
+            return Account(address, 0)
+    raise AttributeError("RPC server missing load_account / get_account")
+
+
+def _scval_to_native(val: Any) -> Any:
+    if isinstance(val, (xdr.SCVal, xdr.sc_val.SCVal)):
+        return scval.to_native(val)
+    if isinstance(val, str):
+        try:
+            parsed = xdr.SCVal.from_xdr(val)
+            return scval.to_native(parsed)
+        except Exception:
+            return val
+    return val
+
+
+def _extract_simulation_retval(simulation: Any) -> Any:
+    results = getattr(simulation, "results", None) or (
+        simulation.get("results") if isinstance(simulation, dict) else None
+    )
+    if results and len(results) > 0:
+        first = results[0]
+        val = (
+            getattr(first, "xdr", None)
+            or getattr(first, "retval", None)
+            or (first.get("xdr") if isinstance(first, dict) else None)
+            or (first.get("retval") if isinstance(first, dict) else None)
+        )
+        if val is not None:
+            return _scval_to_native(val)
+    result = getattr(simulation, "result", None) or (
+        simulation.get("result") if isinstance(simulation, dict) else None
+    )
+    if result:
+        val = getattr(result, "retval", None) or (
+            result.get("retval") if isinstance(result, dict) else None
+        )
+        if val is not None:
+            return _scval_to_native(val)
+    return None
+
+
+def _extract_simulation_auth(simulation: Any) -> list[Any]:
+    results = getattr(simulation, "results", None) or (
+        simulation.get("results") if isinstance(simulation, dict) else None
+    )
+    if results and len(results) > 0:
+        first = results[0]
+        auth = getattr(first, "auth", None) or (
+            first.get("auth") if isinstance(first, dict) else None
+        )
+        if auth:
+            return list(auth)
+    result = getattr(simulation, "result", None) or (
+        simulation.get("result") if isinstance(simulation, dict) else None
+    )
+    if result:
+        auth = getattr(result, "auth", None) or (
+            result.get("auth") if isinstance(result, dict) else None
+        )
+        if auth:
+            return list(auth)
+    return []
+
+
+def _extract_return_value(confirmed: Any) -> Any:
+    for attr in ("return_value", "returnValue"):
+        val = getattr(confirmed, attr, None) or (
+            confirmed.get(attr) if isinstance(confirmed, dict) else None
+        )
+        if val is not None:
+            return _scval_to_native(val)
+    meta_xdr = getattr(confirmed, "result_meta_xdr", None) or (
+        confirmed.get("result_meta_xdr") if isinstance(confirmed, dict) else None
+    )
+    if meta_xdr:
+        try:
+            meta = xdr.TransactionMeta.from_xdr(meta_xdr)
+            if meta.v3 and meta.v3.soroban_meta and meta.v3.soroban_meta.return_value:
+                return _scval_to_native(meta.v3.soroban_meta.return_value)
+        except Exception:
+            pass
+    return None
 
 
 class StellarAgent:
     """Main SDK class for AI Agent payment operations on Stellar.
 
     Use :meth:`create` rather than the constructor.
-
-    >>> agent = StellarAgent.create(  # doctest: +SKIP
-    ...     network="testnet",
-    ...     spend_limit=SpendLimit(amount="10", asset="USDC", period="hourly"),
-    ... )
-    >>> agent.pay_for_api(  # doctest: +SKIP
-    ...     PayForAPIParams(
-    ...         endpoint="https://api.example.com/inference",
-    ...         amount="0.001",
-    ...         asset="USDC",
-    ...     )
-    ... )
     """
 
     def __init__(
@@ -82,15 +239,13 @@ class StellarAgent:
         network_config: NetworkConfig,
         contracts: ContractAddresses,
     ) -> None:
-        # Private by convention and by name-mangling: the secret should not be
-        # something a caller reaches for casually. See the note on
-        # :attr:`secret_key`.
         self.__keypair = keypair
         self._network_config = network_config
         self._contracts = contracts
         self._horizon = Server(horizon_url=network_config.horizon_url)
-        self._rpc = SorobanServer(server_url=network_config.rpc_url)
+        self._rpc: Any = SorobanServer(server_url=network_config.rpc_url)
         self._active_channel_id: int | None = None
+        self._poll_interval: float = 1.0
 
     # ── Factory methods ──────────────────────────────────────────────────────
 
@@ -103,18 +258,7 @@ class StellarAgent:
         contracts: dict[str, str] | None = None,
         allow_unconfigured_contracts: bool = False,
     ) -> StellarAgent:
-        """Create a new agent. Generates a fresh keypair when no secret is given.
-
-        Contract addresses resolve from ``contracts``, then from the
-        ``STELLARAGENT_*`` environment variables, then from the per-network
-        unconfigured sentinels — the same precedence as the TypeScript SDK,
-        reading the same variable names.
-
-        :raises ContractsNotDeployedError: when the resolved contracts are not
-            real deployed contract IDs and ``allow_unconfigured_contracts`` is
-            false. Pass ``True`` when you only need contract-free calls such
-            as :meth:`get_balance`.
-        """
+        """Create a new agent. Generates a fresh keypair when no secret is given."""
         if network not in NETWORK_CONFIGS:
             raise ValueError(
                 f"Unknown network {network!r}. Expected one of: "
@@ -144,12 +288,7 @@ class StellarAgent:
         network: Network = "testnet",
         **options: Any,
     ) -> StellarAgent:
-        """Restore an agent from an existing secret key.
-
-        ``options`` forwards the rest of :meth:`create` — notably ``contracts``
-        and ``allow_unconfigured_contracts``, without which a restored agent
-        could only ever target contracts resolved from the environment.
-        """
+        """Restore an agent from an existing secret key."""
         return cls.create(network=network, secret_key=secret_key, **options)
 
     # ── Identity ─────────────────────────────────────────────────────────────
@@ -161,16 +300,7 @@ class StellarAgent:
 
     @property
     def secret_key(self) -> str:
-        """The agent's secret key — keep this safe.
-
-        .. deprecated::
-           The TypeScript SDK has moved signing behind a ``Signer`` interface
-           so key material need not live in the agent process at all (see
-           ``docs/signing.md``). This property is the pattern that abstraction
-           exists to remove, and is kept only for parity with the TS class's
-           current surface. A Python ``Signer`` equivalent should land before
-           this package is used with real funds.
-        """
+        """The agent's secret key — keep this safe."""
         return str(self.__keypair.secret)
 
     @property
@@ -183,40 +313,368 @@ class StellarAgent:
         """RPC, Horizon and passphrase for the selected network."""
         return self._network_config
 
+    @property
+    def active_channel_id(self) -> int | None:
+        """The active payment channel ID, if one is currently open."""
+        return self._active_channel_id
+
+    @active_channel_id.setter
+    def active_channel_id(self, channel_id: int | None) -> None:
+        self._active_channel_id = channel_id
+
+    @property
+    def rpc(self) -> Any:
+        """The Soroban RPC server instance."""
+        return self._rpc
+
+    @rpc.setter
+    def rpc(self, server: Any) -> None:
+        self._rpc = server
+
+    @property
+    def signer(self) -> Any:
+        """Signer interface for parity with the TS SDK."""
+        return self
+
+    # ── Shared invocation helper ─────────────────────────────────────────────
+
+    def _invoke_contract(
+        self,
+        contract_id: str,
+        method: str,
+        args: Sequence[xdr.SCVal],
+        read_only: bool = False,
+    ) -> InvocationResult:
+        """Build, simulate, sign, submit, and poll a Soroban contract invocation."""
+        # 1. Build
+        try:
+            account = _get_account(self._rpc, self.address)
+        except Exception as exc:
+            if isinstance(exc, StellarAgentError):
+                raise
+            raise StellarAgentError(
+                "NETWORK_ERROR",
+                f"{method} failed while communicating with Soroban RPC: {exc}",
+                cause=exc,
+            ) from exc
+
+        builder = (
+            TransactionBuilder(
+                source_account=account,
+                network_passphrase=self._network_config.network_passphrase,
+                base_fee=100,
+            )
+            .set_timeout(30)
+            .append_invoke_contract_function_op(
+                contract_id=contract_id,
+                function_name=method,
+                parameters=list(args),
+            )
+        )
+        te = builder.build()
+        op = te.transaction.operations[0]
+        assert isinstance(op, InvokeHostFunction)
+        cast(Any, op).func = _FuncAdapter(op.host_function)
+        cast(Any, te).operations = te.transaction.operations
+
+        # 2. Simulate
+        try:
+            sim_fn = getattr(self._rpc, "simulate_transaction", None) or getattr(
+                self._rpc, "simulateTransaction", None
+            )
+            if not callable(sim_fn):
+                raise AttributeError("RPC server missing simulate_transaction / simulateTransaction")
+            simulation = sim_fn(te)
+        except Exception as exc:
+            if isinstance(exc, StellarAgentError):
+                raise
+            raise StellarAgentError(
+                "NETWORK_ERROR",
+                f"{method} failed while communicating with Soroban RPC: {exc}",
+                cause=exc,
+            ) from exc
+
+        sim_error = getattr(simulation, "error", None) or (
+            simulation.get("error") if isinstance(simulation, dict) else None
+        )
+        if sim_error:
+            raise contract_error("SIMULATION_FAILED", f"{method} simulation failed: {sim_error}")
+
+        restore_preamble = (
+            getattr(simulation, "restore_preamble", None)
+            or (
+                simulation.get("restore_preamble") or simulation.get("restorePreamble")
+                if isinstance(simulation, dict)
+                else None
+            )
+        )
+        if restore_preamble:
+            raise StellarAgentError(
+                "SIMULATION_FAILED",
+                f"{method} requires restoring expired ledger entries before invocation",
+            )
+
+        if read_only:
+            val = _extract_simulation_retval(simulation)
+            return InvocationResult(value=val, tx=TxResult(hash="", success=True))
+
+        # 3. Sign Auth Entries & Assemble
+        latest_ledger = (
+            getattr(simulation, "latest_ledger", None)
+            or getattr(simulation, "latestLedger", None)
+            or (
+                simulation.get("latest_ledger") or simulation.get("latestLedger")
+                if isinstance(simulation, dict)
+                else None
+            )
+            or 0
+        )
+        valid_until = latest_ledger + 100
+        raw_auth = _extract_simulation_auth(simulation)
+        signed_auth: list[SorobanAuthorizationEntry] = []
+        for entry in raw_auth:
+            signed_entry = self.sign_auth_entry(entry, valid_until)
+            if isinstance(signed_entry, str):
+                signed_entry = SorobanAuthorizationEntry.from_xdr(signed_entry)
+            signed_auth.append(signed_entry)
+
+        assert isinstance(op, InvokeHostFunction)
+        authorized_op = InvokeHostFunction(
+            host_function=op.host_function,
+            auth=signed_auth,
+            source=op.source,
+        )
+
+        td = (
+            getattr(simulation, "transaction_data", None)
+            or getattr(simulation, "transactionData", None)
+            or (
+                simulation.get("transaction_data") or simulation.get("transactionData")
+                if isinstance(simulation, dict)
+                else None
+            )
+        )
+        if isinstance(td, SorobanDataBuilder):
+            soroban_data = td.build()  # type: ignore[no-untyped-call]
+        elif isinstance(td, str):
+            soroban_data = SorobanTransactionData.from_xdr(td)
+        elif isinstance(td, (xdr.SorobanTransactionData, SorobanTransactionData)):
+            soroban_data = td
+        else:
+            soroban_data = SorobanDataBuilder().build()  # type: ignore[no-untyped-call]
+
+        min_resource_fee = int(
+            getattr(simulation, "min_resource_fee", 0)
+            or getattr(simulation, "minResourceFee", 0)
+            or (
+                simulation.get("min_resource_fee") or simulation.get("minResourceFee")
+                if isinstance(simulation, dict)
+                else 0
+            )
+            or 0
+        )
+
+        assembled = copy.deepcopy(te)
+        assembled.signatures = []
+        assembled.transaction.soroban_data = soroban_data
+        assembled.transaction.fee += min_resource_fee
+        assembled.transaction.operations = [authorized_op]
+
+        self.sign_transaction(assembled)
+
+        # 4. Submit
+        try:
+            send_fn = getattr(self._rpc, "send_transaction", None) or getattr(
+                self._rpc, "sendTransaction", None
+            )
+            if not callable(send_fn):
+                raise AttributeError("RPC server missing send_transaction / sendTransaction")
+            submit_res = send_fn(assembled)
+        except Exception as exc:
+            if isinstance(exc, StellarAgentError):
+                raise
+            raise StellarAgentError(
+                "NETWORK_ERROR",
+                f"{method} failed while communicating with Soroban RPC: {exc}",
+                cause=exc,
+            ) from exc
+
+        status = (
+            getattr(submit_res, "status", None)
+            or (submit_res.get("status") if isinstance(submit_res, dict) else None)
+        )
+        status_name = status.name if isinstance(status, Enum) else str(status).upper()
+
+        tx_hash = (
+            getattr(submit_res, "hash", None)
+            or getattr(submit_res, "transaction_hash", None)
+            or (
+                submit_res.get("hash") or submit_res.get("transaction_hash")
+                if isinstance(submit_res, dict)
+                else None
+            )
+            or ""
+        )
+
+        if status_name not in ("PENDING", "DUPLICATE", "SUCCESS"):
+            err_msg = f"{method} submission failed ({status_name})"
+            diag = getattr(submit_res, "error_result_xdr", None) or (
+                submit_res.get("error_result_xdr") if isinstance(submit_res, dict) else None
+            )
+            if diag:
+                err_msg += f": {diag}"
+            raise contract_error("SUBMISSION_FAILED", err_msg, tx_hash)
+
+        # 5. Poll
+        get_tx_fn = getattr(self._rpc, "get_transaction", None) or getattr(
+            self._rpc, "getTransaction", None
+        )
+        if not callable(get_tx_fn):
+            raise AttributeError("RPC server missing get_transaction / getTransaction")
+
+        for _ in range(30):
+            try:
+                confirmed = get_tx_fn(tx_hash)
+            except Exception as exc:
+                if isinstance(exc, StellarAgentError):
+                    raise
+                raise StellarAgentError(
+                    "NETWORK_ERROR",
+                    f"{method} failed while communicating with Soroban RPC: {exc}",
+                    cause=exc,
+                ) from exc
+
+            c_status = (
+                getattr(confirmed, "status", None)
+                or (confirmed.get("status") if isinstance(confirmed, dict) else None)
+            )
+            c_status_str = c_status.name if isinstance(c_status, Enum) else str(c_status).upper()
+
+            if c_status_str == "SUCCESS":
+                val = _extract_return_value(confirmed)
+                ledger = (
+                    getattr(confirmed, "ledger", None)
+                    or (confirmed.get("ledger") if isinstance(confirmed, dict) else None)
+                )
+                return InvocationResult(
+                    value=val,
+                    tx=TxResult(hash=tx_hash, success=True, ledger=ledger),
+                )
+            if c_status_str == "FAILED":
+                raise contract_error(
+                    "TRANSACTION_FAILED",
+                    f"{method} transaction failed",
+                    tx_hash,
+                )
+            time.sleep(self._poll_interval)
+
+        raise StellarAgentError(
+            "TRANSACTION_TIMEOUT",
+            f"{method} transaction did not complete in time",
+            transaction_hash=tx_hash,
+        )
+
+    def sign_auth_entry(
+        self,
+        entry: SorobanAuthorizationEntry | str,
+        valid_until_ledger_seq: int,
+    ) -> SorobanAuthorizationEntry:
+        """Sign a Soroban authorization entry."""
+        entry_obj = (
+            SorobanAuthorizationEntry.from_xdr(entry)
+            if isinstance(entry, str)
+            else entry
+        )
+
+        if entry_obj.credentials.type != SorobanCredentialsType.SOROBAN_CREDENTIALS_ADDRESS:
+            return entry_obj
+
+        return authorize_entry(
+            entry=entry_obj,
+            signer=self.__keypair,
+            valid_until_ledger_sequence=valid_until_ledger_seq,
+            network_passphrase=self._network_config.network_passphrase,
+        )
+
+    def sign_transaction(self, envelope: TransactionEnvelope) -> TransactionEnvelope:
+        """Sign a transaction envelope with the agent's keypair."""
+        envelope.sign(self.__keypair)
+        return envelope
+
     # ── Payment channel ──────────────────────────────────────────────────────
 
     def open_channel(self, params: OpenChannelParams) -> int:
-        """Open a payment channel and return its ID.
-
-        :raises NotImplementedError: pending real Soroban invocation.
-        """
-        raise NotImplementedError(
-            "Not yet implemented — contract invocation is pending. "
-            "See contracts/payment_channel/src/lib.rs and docs/deployment.md"
+        """Open a payment channel and return its ID."""
+        token_contract = resolve_asset_contract(
+            params.token or "XLM",
+            {},
+            self._network_config.network_passphrase,
         )
+        args = [
+            Address(self.address).to_xdr_sc_val(),
+            Address(self.address).to_xdr_sc_val(),
+            Address(token_contract).to_xdr_sc_val(),
+            scval.to_int128(to_stroops(params.deposit)),
+            scval.to_int128(to_stroops(params.limit_per_period)),
+            scval.to_vec([scval.to_symbol(spend_period_variant(params.period))]),
+        ]
+        res = self._invoke_contract(
+            self._contracts.payment_channel,
+            "open_channel",
+            args,
+            read_only=False,
+        )
+        channel_id = int(res.value)
+        self._active_channel_id = channel_id
+        return channel_id
 
     def pay_for_api(self, params: PayForAPIParams) -> TxResult:
-        """Pay for an API call, deducting from the active payment channel.
-
-        Validation runs in the same order as the TS implementation, so both
-        SDKs reject the same call with the same message.
-
-        :raises NotImplementedError: pending real Soroban invocation.
-        """
-        if self._active_channel_id is None:
-            raise RuntimeError(
-                "No active payment channel. Call open_channel() first.\n\n"
-                "Open one with open_channel(), or pass an explicit channel_id to "
-                "this call.\n"
-                f"See {DOCS_BASE}docs/api/core/classes/StellarAgent.md#openchannel"
+        """Pay for an API call, deducting from the active payment channel."""
+        channel_id = (
+            params.channel_id if params.channel_id is not None else self._active_channel_id
+        )
+        if channel_id is None:
+            raise StellarAgentError(
+                "NO_ACTIVE_CHANNEL", "No active payment channel. Call open_channel() first."
             )
 
         if (params.dest_asset is not None) != (params.min_received is not None):
-            raise ValueError("dest_asset and min_received must be set together")
+            raise InvalidArgumentError(
+                "INVALID_ARGUMENT", "dest_asset and min_received must be set together"
+            )
 
-        raise NotImplementedError(
-            "Not yet implemented — see contracts/payment_channel/src/lib.rs"
+        common_args = [
+            Address(self.address).to_xdr_sc_val(),
+            scval.to_uint64(channel_id),
+            Address(params.recipient or self.address).to_xdr_sc_val(),
+            scval.to_int128(to_stroops(params.amount)),
+        ]
+
+        if params.dest_asset is None:
+            method = "pay"
+            args = [*common_args, scval.to_bytes(params.endpoint.encode("utf-8"))]
+        else:
+            method = "pay_with_conversion"
+            dest_contract = resolve_asset_contract(
+                params.dest_asset,
+                {},
+                self._network_config.network_passphrase,
+            )
+            assert params.min_received is not None
+            args = [
+                *common_args,
+                Address(dest_contract).to_xdr_sc_val(),
+                scval.to_int128(to_stroops(params.min_received)),
+                scval.to_bytes(params.endpoint.encode("utf-8")),
+            ]
+
+        res = self._invoke_contract(
+            self._contracts.payment_channel,
+            method,
+            args,
+            read_only=False,
         )
+        return res.tx
 
     # ── Agent-to-agent escrow ────────────────────────────────────────────────
 
@@ -359,11 +817,7 @@ class StellarAgent:
     # ── Queries ──────────────────────────────────────────────────────────────
 
     def get_balance(self) -> str:
-        """Current native XLM balance, or ``"0"`` if the account is unknown.
-
-        A Horizon query — it needs no contracts and no signing, which is why
-        it works on an agent created with ``allow_unconfigured_contracts``.
-        """
+        """Current native XLM balance, or ``"0"`` if the account is unknown."""
         try:
             account = self._horizon.accounts().account_id(self.address).call()
         except Exception:  # noqa: BLE001 — an unfunded account is a normal state
@@ -526,88 +980,4 @@ class StellarAgent:
             print("Could not reach friendbot")
 
     def __repr__(self) -> str:
-        # Deliberately omits the secret: a repr lands in logs and tracebacks.
-        return (
-            f"StellarAgent(address={self.address!r},"
-            f" network={self._network_config.horizon_url!r})"
-        )
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _decode_sim_result(sim: Any) -> Any:
-    """Extract and decode the return value from a Soroban simulation result.
-
-    Handles the ``SimulateTransactionResponse`` from ``stellar-sdk``, decoding
-    the top-level ``SCVal`` into a Python-native type:
-
-    - ``SCV_BOOL``  → ``bool``
-    - ``SCV_I128`` / ``SCV_U128``  → ``int``
-    - ``SCV_U32`` / ``SCV_I32``  → ``int``
-    - ``SCV_MAP`` (struct)  → ``dict[str, Any]`` (recursively decoded)
-    - ``SCV_VOID``  → ``None``
-    """
-    from stellar_sdk.xdr import SCValType
-
-    results = getattr(sim, "results", None) or []
-    if not results:
-        return None
-
-    xdr_val = results[0].xdr
-    if xdr_val is None:
-        return None
-
-    from stellar_sdk.xdr import SCVal
-
-    sc_val = SCVal.from_xdr(xdr_val)
-    return _sc_val_to_python(sc_val)
-
-
-def _sc_val_to_python(sc_val: Any) -> Any:
-    """Recursively decode an ``SCVal`` into a Python-native type."""
-    from stellar_sdk.xdr import SCValType
-
-    vtype = sc_val.type
-
-    if vtype == SCValType.SCV_BOOL:
-        return sc_val.b
-
-    if vtype in (SCValType.SCV_I128,):
-        parts = sc_val.i128
-        return (parts.hi << 64) | parts.lo
-
-    if vtype in (SCValType.SCV_U128,):
-        parts = sc_val.u128
-        return (parts.hi << 64) | parts.lo
-
-    if vtype in (SCValType.SCV_I32,):
-        return sc_val.i32.int32
-
-    if vtype in (SCValType.SCV_U32,):
-        return sc_val.u32.uint32
-
-    if vtype == SCValType.SCV_MAP:
-        result: dict[str, Any] = {}
-        for entry in sc_val.map.sc_map:
-            key = _sc_val_to_python(entry.key)
-            value = _sc_val_to_python(entry.val)
-            result[str(key)] = value
-        return result
-
-    if vtype == SCValType.SCV_SYMBOL:
-        return sc_val.sym.sc_symbol.decode()
-
-    if vtype == SCValType.SCV_STRING:
-        return sc_val.str.sc_string.decode()
-
-    if vtype == SCValType.SCV_ADDRESS:
-        from stellar_sdk import Address as StellarAddress
-
-        return str(StellarAddress.from_xdr_sc_address(sc_val.address))
-
-    if vtype == SCValType.SCV_VOID:
-        return None
-
-    # Fall back to the raw XDR object for unknown types.
-    return sc_val
+        return f"StellarAgent(address={self.address!r}, network={self._network_config.horizon_url!r})"

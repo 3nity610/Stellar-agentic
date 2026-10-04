@@ -112,6 +112,7 @@ class PayForAPIParams:
     channel_id: int | None = None
     dest_asset: str | None = None
     min_received: str | None = None
+    recipient: str | None = None
 
 
 @dataclass(frozen=True)
