@@ -18,13 +18,7 @@
 
 #![no_std]
 
-//! # Rate Limiter Contract
-//!
-//! Prevents runaway agents from draining wallets.
-//! Enforces per-transaction, per-minute, and per-hour caps on-chain.
-//! Works as a standalone guard composable with PaymentChannel.
-
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Map, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Map, Vec};
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -65,6 +59,15 @@ pub struct RateLimit {
     pub daily_buckets: Vec<SpendBucket>,
 
     pub active: bool,
+}
+
+/// Multisig owner configuration for an agent's emergency admin actions
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentMultisig {
+    pub owners: Vec<Address>,
+    pub threshold: u32,
+    pub propose_window_ledgers: u32,
 }
 
 // ─── Contract ────────────────────────────────────────────────────────────────
@@ -249,14 +252,124 @@ impl RateLimiter {
         );
     }
 
-    /// Emergency kill switch — disable an agent immediately
+    /// Configure multi-sig owners and threshold for an agent's rate limit administration.
+    /// Single-owner mode is threshold = 1.
+    pub fn set_agent_multisig(
+        env: Env,
+        caller: Address,
+        agent: Address,
+        owners: Vec<Address>,
+        threshold: u32,
+        propose_window_ledgers: u32,
+    ) {
+        caller.require_auth();
+
+        let limit = Self::load_limit(&env, &agent);
+        if limit.owner != caller {
+            panic!("not the limit owner");
+        }
+
+        if threshold == 0 {
+            panic!("threshold must be positive");
+        }
+        if threshold > owners.len() {
+            panic!("threshold cannot exceed owner count");
+        }
+        if propose_window_ledgers == 0 {
+            panic!("propose window must be positive");
+        }
+
+        let ms = AgentMultisig {
+            owners: owners.clone(),
+            threshold,
+            propose_window_ledgers,
+        };
+
+        let mut multisigs: Map<Address, AgentMultisig> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("ms_cfg"))
+            .unwrap_or(Map::new(&env));
+        multisigs.set(agent.clone(), ms);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("ms_cfg"), &multisigs);
+
+        env.events().publish(
+            (symbol_short!("rl"), symbol_short!("ms_cfg")),
+            (agent, owners, threshold),
+        );
+    }
+
+    /// An authorized owner proposes disabling/killing an agent.
+    pub fn propose_kill_agent(env: Env, owner: Address, agent: Address) {
+        owner.require_auth();
+
+        let multisigs: Map<Address, AgentMultisig> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("ms_cfg"))
+            .unwrap_or(Map::new(&env));
+        let ms = multisigs
+            .get(agent.clone())
+            .expect("multisig not configured");
+        if !ms.owners.contains(&owner) {
+            panic!("not a multisig owner");
+        }
+
+        let key = (symbol_short!("prop_kill"), agent.clone());
+        let mut proposals: Map<Address, u32> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(Map::new(&env));
+        proposals.set(owner.clone(), env.ledger().sequence());
+        env.storage().instance().set(&key, &proposals);
+
+        env.events().publish(
+            (symbol_short!("rl"), symbol_short!("prop_kill")),
+            (agent, owner),
+        );
+    }
+
+    /// Emergency kill switch — disable an agent immediately.
+    /// In single-owner mode (default), requires 1 signature.
+    /// In multi-sig mode, gated on reaching threshold approvals.
     pub fn kill_agent(env: Env, owner: Address, agent: Address) {
         extend_instance_ttl(&env);
         owner.require_auth();
 
         let mut limit = Self::load_limit(&env, &agent);
 
-        if limit.owner != owner {
+        let multisigs: Map<Address, AgentMultisig> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("ms_cfg"))
+            .unwrap_or(Map::new(&env));
+
+        if let Some(ms) = multisigs.get(agent.clone()) {
+            if !ms.owners.contains(&owner) {
+                panic!("not a multisig owner");
+            }
+            if ms.threshold > 1 {
+                let key = (symbol_short!("prop_kill"), agent.clone());
+                let proposals: Map<Address, u32> = env
+                    .storage()
+                    .instance()
+                    .get(&key)
+                    .unwrap_or(Map::new(&env));
+                let count = Self::count_valid_proposals(
+                    &env,
+                    &proposals,
+                    &ms.owners,
+                    ms.propose_window_ledgers,
+                );
+                if count < ms.threshold {
+                    panic!("quorum not reached");
+                }
+                env.storage().instance().remove(&key);
+            }
+        } else if limit.owner != owner {
             panic!("not the limit owner");
         }
 
@@ -294,7 +407,46 @@ impl RateLimiter {
         Self::load_limit(&env, &agent).active
     }
 
+    pub fn get_kill_agent_quorum(env: Env, agent: Address) -> u32 {
+        let multisigs: Map<Address, AgentMultisig> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("ms_cfg"))
+            .unwrap_or(Map::new(&env));
+        if let Some(ms) = multisigs.get(agent.clone()) {
+            let key = (symbol_short!("prop_kill"), agent);
+            let proposals: Map<Address, u32> = env
+                .storage()
+                .instance()
+                .get(&key)
+                .unwrap_or(Map::new(&env));
+            Self::count_valid_proposals(&env, &proposals, &ms.owners, ms.propose_window_ledgers)
+        } else {
+            0
+        }
+    }
+
     // ── Internals ────────────────────────────────────────────────────────────
+
+    fn count_valid_proposals(
+        env: &Env,
+        proposals: &Map<Address, u32>,
+        owners: &Vec<Address>,
+        window: u32,
+    ) -> u32 {
+        let current_ledger = env.ledger().sequence();
+        let cutoff = current_ledger.saturating_sub(window);
+
+        let mut count = 0u32;
+        for owner in owners.iter() {
+            if let Some(proposed_at) = proposals.get(owner) {
+                if proposed_at >= cutoff {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
 
     /// Number of buckets used to cover the hourly window. Each bucket spans
     /// `LEDGERS_PER_HOUR / HOURLY_BUCKETS` ledgers, giving a sliding window
@@ -397,7 +549,7 @@ impl RateLimiter {
             .storage()
             .instance()
             .get(&soroban_sdk::symbol_short!("limits"))
-            .unwrap();
+            .unwrap_or(Map::new(env));
         limits.get(agent.clone()).expect("no rate limit for agent")
     }
 
@@ -417,3 +569,6 @@ impl RateLimiter {
 const LEDGERS_PER_HOUR: u32 = 720;
 const HOURLY_BUCKETS: u32 = 12;
 const DAILY_BUCKETS: u32 = 24;
+
+#[cfg(test)]
+mod test;

@@ -58,7 +58,7 @@
   },
   {
     "function_v0": {
-      "doc": "Emergency kill switch \xe2\x80\x94 disable an agent immediately",
+      "doc": "Emergency kill switch \\xe2\\x80\\x94 disable an agent immediately.\\nIn single-owner mode (default), requires 1 signature.\\nIn multi-sig mode, gated on reaching threshold approvals.",
       "name": "kill_agent",
       "inputs": [
         {
@@ -244,6 +244,107 @@
         }
       ],
       "outputs": []
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "Multisig owner configuration for an agent's emergency admin actions",
+      "lib": "",
+      "name": "AgentMultisig",
+      "fields": [
+        {
+          "doc": "",
+          "name": "owners",
+          "type_": {
+            "vec": {
+              "element_type": "address"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "propose_window_ledgers",
+          "type_": "u32"
+        },
+        {
+          "doc": "",
+          "name": "threshold",
+          "type_": "u32"
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "An authorized owner proposes disabling/killing an agent.",
+      "name": "propose_kill_agent",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "agent",
+          "type_": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Configure multi-sig owners and threshold for an agent's rate limit administration.\\nSingle-owner mode is threshold = 1.",
+      "name": "set_agent_multisig",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "caller",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "agent",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "owners",
+          "type_": {
+            "vec": {
+              "element_type": "address"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "threshold",
+          "type_": "u32"
+        },
+        {
+          "doc": "",
+          "name": "propose_window_ledgers",
+          "type_": "u32"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "",
+      "name": "get_kill_agent_quorum",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "agent",
+          "type_": "address"
+        }
+      ],
+      "outputs": [
+        "u32"
+      ]
     }
   }
 ]
