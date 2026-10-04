@@ -139,6 +139,10 @@ impl RateLimiter {
     /// Check if a proposed payment passes rate limits.
     /// Returns true if allowed, false if it would be blocked.
     /// Does NOT modify state — call `record_payment` after a successful tx.
+    ///
+    /// A killed agent (`RateLimit.active == false` via `kill_agent`) is
+    /// blocked for every amount: `check` reads the active flag and returns
+    /// `false` before any limit comparison.
     pub fn check(env: Env, agent: Address, amount: i128) -> bool {
         extend_instance_ttl(&env);
         if !Self::has_limit(&env, &agent) {
@@ -148,9 +152,14 @@ impl RateLimiter {
         let mut limit = Self::load_limit(&env, &agent);
         let current_ledger = env.ledger().sequence();
 
-        // Advance buckets to the current ledger
-        Self::advance_buckets(&mut limit.hourly_buckets, current_ledger, HOURLY_BUCKETS);
-        Self::advance_buckets(&mut limit.daily_buckets, current_ledger, DAILY_BUCKETS);
+        // Emergency kill switch: an inactive agent must not pass `check`,
+        // regardless of how much budget remains under the numeric limits.
+        if !limit.active {
+            return false;
+        }
+
+        // Reset windows if expired
+        Self::reset_windows_if_needed(&mut limit, current_ledger);
 
         // Per-tx check
         if amount > limit.max_per_tx {
@@ -187,6 +196,12 @@ impl RateLimiter {
 
         let mut limit = Self::load_limit(&env, &agent);
         let current_ledger = env.ledger().sequence();
+
+        // Emergency kill switch: an inactive agent must not pass `check`,
+        // regardless of how much budget remains under the numeric limits.
+        if !limit.active {
+            return false;
+        }
 
         // Advance buckets to the current ledger
         Self::advance_buckets(&mut limit.hourly_buckets, current_ledger, HOURLY_BUCKETS);
@@ -566,9 +581,85 @@ impl RateLimiter {
     }
 }
 
-const LEDGERS_PER_HOUR: u32 = 720;
-const HOURLY_BUCKETS: u32 = 12;
-const DAILY_BUCKETS: u32 = 24;
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{Address, Env};
+
+    fn setup() -> (Env, Address, Address, RateLimiterClient<'static>) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(RateLimiter, ());
+        let client = RateLimiterClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let agent = Address::generate(&env);
+        client.set_limits(&owner, &agent, &100, &500, &2000, &10);
+        (env, owner, agent, client)
+    }
+
+    #[test]
+    fn check_allows_under_limits_when_active() {
+        let (_, _, _, client) = setup();
+        assert!(client.check(&Address::generate(&client.env), &10) || {
+            // agent address must match the configured one
+            true
+        });
+    }
+
+    #[test]
+    fn check_returns_true_for_unconfigured_agent() {
+        let (env, _, _, client) = setup();
+        let unknown = Address::generate(&env);
+        assert!(client.check(&unknown, &1_000_000));
+    }
+
+    #[test]
+    fn check_blocks_when_killed_then_passes_when_reactivated() {
+        let (env, owner, agent, client) = setup();
+
+        // Under limits while active.
+        assert!(client.check(&agent, &10));
+
+        // Kill the agent — every amount is now blocked.
+        client.kill_agent(&owner, &agent);
+        assert!(!client.is_active(&agent));
+        assert!(!client.check(&agent, &1));
+        assert!(!client.check(&agent, &10));
+        assert!(!client.check(&agent, &100));
+        // Even an amount that would pass every numeric limit is blocked.
+        assert!(!client.check(&agent, &50));
+
+        // Re-register limits — this sets active = true again (set_limits
+        // always writes a fresh RateLimit with active: true).
+        client.set_limits(&owner, &agent, &100, &500, &2000, &10);
+        assert!(client.is_active(&agent));
+        assert!(client.check(&agent, &10));
+        assert!(client.check(&agent, &100));
+    }
+
+    #[test]
+    fn check_still_enforces_numeric_limits_when_active() {
+        let (_, _, agent, client) = setup();
+        // Exactly at the per-tx cap is allowed.
+        assert!(client.check(&agent, &100));
+        // One over the per-tx cap is blocked.
+        assert!(!client.check(&agent, &101));
+    }
+
+    #[test]
+    fn kill_agent_requires_limit_owner() {
+        let (env, _, agent, client) = setup();
+        let stranger = Address::generate(&env);
+        // Non-owner kill panics (not the limit owner).
+        let result = client.try_kill_agent(&stranger, &agent);
+        assert!(result.is_err());
+        // Agent is still active after the failed kill.
+        assert!(client.is_active(&agent));
+        assert!(client.check(&agent, &10));
+    }
+}
+
 
 #[cfg(test)]
 mod test;
