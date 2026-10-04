@@ -25,6 +25,7 @@ __all__ = [
     "JobInfo",
     "RateLimitConfig",
     "RateLimitStatus",
+    "UNCONFIGURED_RATE_LIMIT",
     "TxResult",
 ]
 
@@ -111,6 +112,7 @@ class PayForAPIParams:
     channel_id: int | None = None
     dest_asset: str | None = None
     min_received: str | None = None
+    recipient: str | None = None
 
 
 @dataclass(frozen=True)
@@ -172,6 +174,18 @@ class RateLimitConfig:
 
 @dataclass(frozen=True)
 class RateLimitStatus:
+    """Current rate-limit usage alongside the configured limits.
+
+    Mirrors ``RateLimitStatus`` in ``packages/core/src/types/index.ts``.
+
+    When ``configured`` is ``False`` every other field is a placeholder and
+    must not be read on its own.  This matches the TypeScript
+    ``UNCONFIGURED_RATE_LIMIT`` sentinel: the RateLimiter contract returns
+    ``true`` from ``check`` unconditionally for an unconfigured agent, so
+    payments are unrestricted by the rate limiter (though still subject to
+    the payment channel's own spend limit, if any).
+    """
+
     max_per_tx: str
     max_per_hour: str
     max_per_day: str
@@ -179,6 +193,34 @@ class RateLimitStatus:
     spent_this_hour: str
     spent_today: str
     txs_this_hour: int
+    #: ``False`` when ``RateLimiter.set_limits`` has never been called for
+    #: this agent — mirrors the TypeScript ``configured`` field.
+    configured: bool = True
+    #: Mirrors the contract's ``RateLimit.active`` flag (cleared by
+    #: ``kill_agent``).
+    active: bool = True
+    #: Ledger sequence at which the current hourly window started.
+    hour_window_start_ledger: int = 0
+    #: Ledger sequence at which the current daily window started.
+    day_window_start_ledger: int = 0
+
+
+#: Returned by :meth:`~stellaragent.agent.StellarAgent.get_rate_limit_status`
+#: when the contract has no entry for the agent — matches the TypeScript
+#: ``UNCONFIGURED_RATE_LIMIT`` constant in ``packages/core/src/agent/config.ts``.
+UNCONFIGURED_RATE_LIMIT = RateLimitStatus(
+    configured=False,
+    active=True,
+    max_per_tx="0",
+    max_per_hour="0",
+    max_per_day="0",
+    max_txs_per_hour=0,
+    spent_this_hour="0",
+    spent_today="0",
+    txs_this_hour=0,
+    hour_window_start_ledger=0,
+    day_window_start_ledger=0,
+)
 
 
 @dataclass(frozen=True)

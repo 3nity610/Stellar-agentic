@@ -390,3 +390,15 @@ with `circuit_breaker.set_trusted_nodes`.
 **Calls fail after a successful deploy**
 Cross-wiring was skipped. Re-run steps 3–4 of the manual runbook, or re-run
 the script — the `set_*` entrypoints are idempotent for the same admin.
+
+---
+
+## Storage and Rent Costs
+
+All contracts are configured to automatically manage their own TTLs to prevent archival on live networks:
+
+- **Instance storage** (which holds channels and jobs) is bumped on every write operation.
+- **Persistent storage** (voucher allocations and settlements in `payment_channel`) is bumped on access.
+
+The standard policy bumps entries to **30 days** of lifetime when their remaining TTL falls below **7 days**. This means most calls will not incur a rent fee; however, callers whose transactions happen to push an entry back above the threshold will pay the state archive rent cost for that extension. Be prepared for slightly variable transaction fees depending on whether a state bump was triggered.
+

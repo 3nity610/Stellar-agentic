@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   toAgentInfo,
   toChannelInfo,
+  toChannelSpendState,
   toJobInfo,
+  toRateLimitSpendState,
   toRateLimitStatus,
 } from '../decoding.js';
 
@@ -135,6 +137,61 @@ describe('toRateLimitStatus', () => {
       spentThisHour: '0.5000000',
       spentToday: '0.6000000',
       txsThisHour: 2,
+      hourWindowStartLedger: 700,
+      dayWindowStartLedger: 100,
+    });
+  });
+});
+
+describe('toChannelSpendState', () => {
+  it('reshapes ChannelInfo into ChannelSpendState for payment prediction', () => {
+    const state = toChannelSpendState({
+      id: 3n,
+      agent: 'GAGENT',
+      owner: 'GOWNER',
+      token: 'CTOKEN',
+      limitPerPeriod: 50n,
+      period: 'hourly',
+      spentThisPeriod: 10n,
+      periodStartLedger: 700,
+      totalSpent: 20n,
+      active: true,
+    });
+    expect(state).toEqual({
+      active: true,
+      limitPerPeriod: '50',
+      spentThisPeriod: '10',
+      periodStartLedger: 700,
+      period: 'hourly',
+    });
+  });
+});
+
+describe('toRateLimitSpendState', () => {
+  it('reshapes RateLimitStatus into RateLimitSpendState for payment prediction', () => {
+    const state = toRateLimitSpendState({
+      configured: true,
+      active: true,
+      maxPerTx: '1.0000000',
+      maxPerHour: '2.0000000',
+      maxPerDay: '3.0000000',
+      maxTxsPerHour: 4,
+      spentThisHour: '0.5000000',
+      spentToday: '0.6000000',
+      txsThisHour: 2,
+      hourWindowStartLedger: 700,
+      dayWindowStartLedger: 100,
+    });
+    expect(state).toEqual({
+      configured: true,
+      active: true,
+      maxPerTx: '1.0000000',
+      maxPerHour: '2.0000000',
+      maxPerDay: '3.0000000',
+      maxTxsPerHour: 4,
+      hourlySpend: '0.5000000',
+      dailySpend: '0.6000000',
+      hourlyTxCount: 2,
       hourWindowStartLedger: 700,
       dayWindowStartLedger: 100,
     });

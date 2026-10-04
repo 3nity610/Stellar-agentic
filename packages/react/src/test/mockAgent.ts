@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import { StellarAgent } from '@stellaragent/core';
 import type {
+  AgentInfo,
   ChannelInfo,
   JobInfo,
   LedgerCloseEstimate,
@@ -11,6 +12,11 @@ import type {
 } from '@stellaragent/core';
 
 export interface MockAgentOverrides {
+<<<<<<< HEAD
+  getBalance?: () => Promise<string>;
+=======
+  getAgent?: (agentId: bigint) => Promise<AgentInfo>;
+>>>>>>> origin/main
   getSpendReport?: () => Promise<SpendReport>;
   getChannel?: (channelId: bigint) => Promise<ChannelInfo>;
   getJob?: (jobId: bigint) => Promise<JobInfo>;
@@ -32,6 +38,11 @@ function unmocked(name: string) {
 export function createMockAgent(overrides: MockAgentOverrides = {}): StellarAgent {
   const mock = {
     address: 'GMOCKAGENTADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+<<<<<<< HEAD
+    getBalance: vi.fn(overrides.getBalance ?? unmocked('getBalance')),
+=======
+    getAgent: vi.fn(overrides.getAgent ?? unmocked('getAgent')),
+>>>>>>> origin/main
     getSpendReport: vi.fn(overrides.getSpendReport ?? unmocked('getSpendReport')),
     getChannel: vi.fn(overrides.getChannel ?? unmocked('getChannel')),
     getJob: vi.fn(overrides.getJob ?? unmocked('getJob')),

@@ -41,7 +41,7 @@ def _load() -> dict:
             f"Shared fixtures missing at {FIXTURES_PATH}.\n"
             "Generate them from the TypeScript implementation: pnpm fixtures:generate"
         )
-    return json.loads(FIXTURES_PATH.read_text())
+    return json.loads(FIXTURES_PATH.read_text(encoding="utf-8"))
 
 
 FIXTURES = _load()
