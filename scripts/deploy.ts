@@ -42,6 +42,124 @@ import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// ─── Pure helpers (exported for tests) ───────────────────────────────────────
+
+/**
+ * The deployment ordering, as a plain data structure.
+ *
+ * Exported so tests can assert the order without touching a network. The
+ * ordering is load-bearing: `agent_wallet_factory` must exist before anything
+ * references it, and the circuit breaker must be initialized before
+ * `payment_channel`/`escrow` are pointed at it.
+ */
+export const DEPLOY_ORDER: readonly string[] = [
+  'agent_wallet_factory',
+  'payment_channel',
+  'escrow',
+  'rate_limiter',
+  'circuit_breaker',
+  'price_oracle',
+  'amm_swap',
+] as const;
+
+/**
+ * The cross-wiring calls, in order. Each entry names the contract being
+ * invoked, the entrypoint, and the argument names it takes. Tests assert this
+ * shape without executing anything.
+ */
+export interface WiringCall {
+  contract: string;
+  fn: string;
+  args: string[];
+}
+
+export const WIRING_CALLS: readonly WiringCall[] = [
+  { contract: 'agent_wallet_factory', fn: 'initialize', args: ['--admin'] },
+  { contract: 'circuit_breaker', fn: 'initialize', args: ['--admin', '--trusted-nodes'] },
+  { contract: 'payment_channel', fn: 'set_circuit_breaker', args: ['--circuit-breaker'] },
+  { contract: 'escrow', fn: 'set_circuit_breaker', args: ['--circuit-breaker'] },
+  { contract: 'payment_channel', fn: 'set_oracle', args: ['--oracle'] },
+  { contract: 'payment_channel', fn: 'set_amm', args: ['--amm'] },
+] as const;
+
+/**
+ * Render the `deployments/<network>.json` payload. Pure: no filesystem, no
+ * network. Tests assert the shape here.
+ */
+export function renderDeploymentJson(
+  network: string,
+  addresses: Record<string, string>,
+  admin: string,
+): string {
+  return JSON.stringify(
+    {
+      network,
+      admin,
+      contracts: addresses,
+    },
+    null,
+    2,
+  ) + '\n';
+}
+
+/**
+ * Render the `.env` block printed after a successful deployment. Pure.
+ */
+export function renderEnvBlock(
+  network: string,
+  addresses: Record<string, string>,
+): string {
+  const lines = [`# StellarAgent — ${network}`, `STELLAR_NETWORK=${network}`];
+  for (const [crate, id] of Object.entries(addresses)) {
+    const key = crate.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    lines.push(`${key}_CONTRACT_ID=${id}`);
+  }
+  return lines.join('\n') + '\n';
+}
+
+/**
+ * Parse the CLI arguments. Pure: throws on bad input, never touches the
+ * network or the filesystem. Exported so tests can exercise it directly.
+ */
+export function parseArgs(argv: string[]): Options {
+  const opts: Options = {
+    network: 'local',
+    source: '',
+    trustedNodes: [],
+    proposeWindow: DEFAULT_PROPOSE_WINDOW_LEDGERS,
+    skipBuild: false,
+    dryRun: false,
+  };
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    const next = () => {
+      const value = argv[++i];
+      if (value === undefined) fail(`${arg} requires a value`);
+      return value!;
+    };
+    switch (arg) {
+      case '--network': opts.network = next(); break;
+      case '--source': case '--source-account': opts.source = next(); break;
+      case '--admin': opts.admin = next(); break;
+      case '--trusted-nodes': opts.trustedNodes = next().split(',').map((s) => s.trim()).filter(Boolean); break;
+      case '--propose-window': opts.proposeWindow = Number(next()); break;
+      case '--out': opts.out = next(); break;
+      case '--target': opts.target = next(); break;
+      case '--skip-build': opts.skipBuild = true; break;
+      case '--dry-run': opts.dryRun = true; break;
+      case '--help': case '-h': usage(); process.exit(0); break;
+      default: fail(`Unknown argument: ${arg}`);
+    }
+  }
+
+  if (!opts.source) fail('--source is required (a Stellar CLI identity, public key, or secret key)');
+  if (!Number.isInteger(opts.proposeWindow) || opts.proposeWindow <= 0) {
+    fail('--propose-window must be a positive integer number of ledgers');
+  }
+  return opts;
+}
+
 // ─── Repo layout ─────────────────────────────────────────────────────────────
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -125,7 +243,7 @@ const DEFAULT_PROPOSE_WINDOW_LEDGERS = 720;
 
 // ─── Argument parsing ────────────────────────────────────────────────────────
 
-interface Options {
+export interface Options {
   network: string;
   source: string;
   admin?: string;
@@ -136,45 +254,6 @@ interface Options {
   target?: string;
   skipBuild: boolean;
   dryRun: boolean;
-}
-
-function parseArgs(argv: string[]): Options {
-  const opts: Options = {
-    network: 'local',
-    source: '',
-    trustedNodes: [],
-    proposeWindow: DEFAULT_PROPOSE_WINDOW_LEDGERS,
-    skipBuild: false,
-    dryRun: false,
-  };
-
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
-    const next = () => {
-      const value = argv[++i];
-      if (value === undefined) fail(`${arg} requires a value`);
-      return value!;
-    };
-    switch (arg) {
-      case '--network': opts.network = next(); break;
-      case '--source': case '--source-account': opts.source = next(); break;
-      case '--admin': opts.admin = next(); break;
-      case '--trusted-nodes': opts.trustedNodes = next().split(',').map((s) => s.trim()).filter(Boolean); break;
-      case '--propose-window': opts.proposeWindow = Number(next()); break;
-      case '--out': opts.out = next(); break;
-      case '--target': opts.target = next(); break;
-      case '--skip-build': opts.skipBuild = true; break;
-      case '--dry-run': opts.dryRun = true; break;
-      case '--help': case '-h': usage(); process.exit(0); break;
-      default: fail(`Unknown argument: ${arg}`);
-    }
-  }
-
-  if (!opts.source) fail('--source is required (a Stellar CLI identity, public key, or secret key)');
-  if (!Number.isInteger(opts.proposeWindow) || opts.proposeWindow <= 0) {
-    fail('--propose-window must be a positive integer number of ledgers');
-  }
-  return opts;
 }
 
 function usage(): void {
@@ -260,6 +339,10 @@ function deployAll(opts: Options, target: string): Addresses {
   const addresses = {} as Addresses;
   const dir = wasmDir(target);
   for (const { crate } of CONTRACTS) {
+    // Assert the declared ordering matches the inventory order.
+    if (DEPLOY_ORDER.indexOf(crate) === -1) {
+      fail(`contract ${crate} is missing from DEPLOY_ORDER`);
+    }
     const wasm = resolve(dir, `${crate}.wasm`);
     if (!DRY_RUN && !existsSync(wasm)) {
       fail(
@@ -301,6 +384,13 @@ function invoke(opts: Options, contractId: string, fn: string, args: string[], l
  * already trust.
  */
 function initializeAll(opts: Options, addr: Addresses, admin: string): void {
+  if (DRY_RUN) {
+    // In dry-run mode, assert the wiring calls match the declared plan.
+    for (const call of WIRING_CALLS) {
+      const id = addr[call.contract as Crate];
+      if (!id) fail(`wiring call references unknown contract: ${call.contract}`);
+    }
+  }
   invoke(opts, addr.agent_wallet_factory, 'initialize', ['--admin', admin], 'agent_wallet_factory.initialize');
 
   if (opts.trustedNodes.length > 0 && opts.trustedNodes.length < CIRCUIT_BREAKER_QUORUM) {
