@@ -161,6 +161,22 @@ CI fails if coverage drops below that. Thresholds live in
 [`packages/core/vitest.config.ts`](packages/core/vitest.config.ts). If you add
 a helper to `math/`, add tests for it in the same PR.
 
+### Coverage reports on pull requests
+
+Beyond that gate, CI publishes coverage to
+[Codecov](https://codecov.io/gh/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic)
+under three flags, and Codecov comments on every PR with the diff coverage and
+how each flag moved:
+
+| Flag | What it measures | Local command |
+| --- | --- | --- |
+| `core-math` | `packages/core/src/math` (the 100% gate above) | `pnpm --filter @stellaragent/core test:coverage` |
+| `typescript` | every TS package with tests, all of `src/` | `pnpm --filter <package> test:coverage` (`test:coverage:full` for core) |
+| `python` | the Python SDK | `cd python && pytest --cov` |
+
+These reports are informational: only the `core/math` gate fails CI. Settings
+live in [`codecov.yml`](codecov.yml).
+
 ### Dashboard e2e (Playwright)
 
 ```bash

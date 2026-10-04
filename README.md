@@ -4,6 +4,9 @@
 > The fastest, cheapest way to give AI agents autonomous payment capabilities.
 
 [![CI](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/actions/workflows/ci.yml/badge.svg)](https://github.com/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/actions/workflows/ci.yml)
+[![Coverage: TypeScript](https://codecov.io/gh/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/graph/badge.svg?flag=typescript)](https://codecov.io/gh/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic?flags[0]=typescript)
+[![Coverage: Python](https://codecov.io/gh/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/graph/badge.svg?flag=python)](https://codecov.io/gh/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic?flags[0]=python)
+[![Coverage: core/math](https://codecov.io/gh/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic/graph/badge.svg?flag=core-math)](https://codecov.io/gh/StellarAgent-AI-Agent-Payment-Rails/Stellar-agentic?flags[0]=core-math)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Stellar](https://img.shields.io/badge/Built%20on-Stellar-blue)](https://stellar.org)
 [![Soroban](https://img.shields.io/badge/Smart%20Contracts-Soroban-purple)](https://soroban.stellar.org)

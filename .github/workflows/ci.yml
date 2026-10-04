@@ -414,7 +414,20 @@ jobs:
       # modules produce byte-identical output to the TypeScript ones for every
       # case in fixtures/determinism.json.
       - name: Test
-        run: pytest -q
+        run: pytest -q --cov --cov-report=term --cov-report=xml
+
+      # One upload is enough: the code under test is the same on every
+      # interpreter, and four reports for the same commit would only make the
+      # PR comment noisier. Informational; see codecov.yml.
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && matrix.python-version == '3.12' }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: python/coverage.xml
+          flags: python
+          disable_search: true
+          fail_ci_if_error: false
 
   # ── Cross-language determinism (the required check) ───────────────────────
   #
@@ -543,13 +556,106 @@ jobs:
             '
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v6
+      # vitest writes paths relative to the package (SF:src/math/...), which
+      # Codecov cannot place in a monorepo; make them repo-relative.
+      - name: Make lcov paths repo-relative
+        if: ${{ !cancelled() }}
+        run: |
+          f=packages/core/coverage/lcov.info
+          [ -f "$f" ] && sed -i 's#^SF:#SF:packages/core/#' "$f" || true
+
+      # Replaces the old core-coverage artifact: the numbers now show up on
+      # the PR itself. Runs even when the gate above fails, so the comment
+      # shows which lines dropped out. The gate is still the step above.
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
         with:
-          name: core-coverage
-          path: packages/core/coverage/
-          retention-days: 7
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/core/coverage/lcov.info
+          flags: core-math
+          disable_search: true
+          fail_ci_if_error: false
+
+  # ── TypeScript coverage (informational) ───────────────────────────────────
+  #
+  # Whole-surface coverage for every TS package with a test suite, published
+  # to Codecov under the `typescript` flag. No thresholds: this job reports how
+  # a PR moved coverage, it does not gate on it. The only coverage gate is
+  # math-coverage above. core runs with vitest.coverage.config.ts, which
+  # measures all of src/ instead of just src/math.
+  coverage:
+    name: Coverage report (TypeScript)
+    runs-on: ubuntu-latest
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        # Version is taken from the "packageManager" field in package.json.
+        # Passing "version" here as well makes the action abort with
+        # ERR_PNPM_BAD_PM_VERSION ("Multiple versions of pnpm specified").
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: core (whole package)
+        run: pnpm --filter @stellaragent/core run test:coverage:full
+
+      # --continue so one package's failing test does not hide every other
+      # package's report; the packages job is where test failures gate.
+      - name: Other packages
+        if: ${{ !cancelled() }}
+        run: >-
+          pnpm turbo run test:coverage --continue
+          --filter=@stellaragent/cli
+          --filter=@stellaragent/react
+          --filter=@stellaragent/indexer
+          --filter=@stellaragent/harness
+          --filter=@stellaragent/integration-shared
+          --filter=@stellaragent/mcp-server
+          --filter=@stellaragent/langchain
+
+      # vitest writes paths relative to each package (SF:src/index.ts), and
+      # half the packages have a src/index.ts; prefix each with its package
+      # directory so Codecov attributes lines to the right file.
+      - name: Make lcov paths repo-relative
+        if: ${{ !cancelled() }}
+        run: |
+          for f in packages/core/coverage-full/lcov.info packages/*/coverage/lcov.info integrations/*/coverage/lcov.info; do
+            [ -f "$f" ] || continue
+            pkg=$(dirname "$(dirname "$f")")
+            sed -i "s#^SF:#SF:$pkg/#" "$f"
+          done
+
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: >-
+            packages/core/coverage-full/lcov.info,
+            packages/cli/coverage/lcov.info,
+            packages/react/coverage/lcov.info,
+            packages/indexer/coverage/lcov.info,
+            packages/harness/coverage/lcov.info,
+            integrations/shared/coverage/lcov.info,
+            integrations/mcp-server/coverage/lcov.info,
+            integrations/langchain-js/coverage/lcov.info
+          flags: typescript
+          disable_search: true
+          fail_ci_if_error: false
 
   # ── Dashboard e2e ─────────────────────────────────────────────────────────
   dashboard-e2e:

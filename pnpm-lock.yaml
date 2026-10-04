@@ -151,6 +151,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.42
+      '@vitest/coverage-v8':
+        specifier: ^1.0.0
+        version: 1.6.1(vitest@1.6.1)
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(jiti@1.21.7)(postcss@8.5.15)(tsx@4.23.15)(typescript@5.9.3)(yaml@2.9.1)
@@ -176,6 +179,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.42
+      '@vitest/coverage-v8':
+        specifier: ^1.0.0
+        version: 1.6.1(vitest@1.6.1)
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(jiti@1.21.7)(postcss@8.5.15)(tsx@4.23.15)(typescript@5.9.3)(yaml@2.9.1)
@@ -198,6 +204,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.42
+      '@vitest/coverage-v8':
+        specifier: ^1.0.0
+        version: 1.6.1(vitest@1.6.1)
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(jiti@1.21.7)(postcss@8.5.15)(tsx@4.23.15)(typescript@5.9.3)(yaml@2.9.1)
@@ -223,6 +232,9 @@ importers:
       '@typescript-eslint/parser':
         specifier: ^8.61.1
         version: 8.61.1(eslint@8.57.1)(typescript@5.9.3)
+      '@vitest/coverage-v8':
+        specifier: ^1.0.0
+        version: 1.6.1(vitest@1.6.1)
       eslint:
         specifier: ^8.57.0
         version: 8.57.1
@@ -303,6 +315,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.42
+      '@vitest/coverage-v8':
+        specifier: ^1.0.0
+        version: 1.6.1(vitest@1.6.1)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -328,6 +343,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.42
+      '@vitest/coverage-v8':
+        specifier: ^1.0.0
+        version: 1.6.1(vitest@1.6.1)
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(jiti@1.21.7)(postcss@8.5.15)(tsx@4.23.15)(typescript@5.9.3)(yaml@2.9.1)
@@ -365,6 +383,9 @@ importers:
       '@typescript-eslint/parser':
         specifier: ^7.18.0
         version: 7.18.0(eslint@8.57.1)(typescript@5.9.3)
+      '@vitest/coverage-v8':
+        specifier: ^1.0.0
+        version: 1.6.1(vitest@1.6.1)
       eslint:
         specifier: ^8.57.0
         version: 8.57.1
@@ -6916,7 +6937,7 @@ snapshots:
 
   make-dir@4.0.0:
     dependencies:
-      semver: 7.8.4
+      semver: 7.8.5
 
   markdown-it@14.3.0:
     dependencies:
