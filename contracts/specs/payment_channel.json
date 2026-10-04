@@ -59,7 +59,7 @@
   },
   {
     "function_v0": {
-      "doc": "Wire this channel contract up to a deployed AMM/DEX contract, used\\nby `pay_with_conversion` to actually execute cross-asset swaps. The\\nfirst caller to set it becomes the admin for future rotations,\\nmirroring `set_circuit_breaker`.",
+      "doc": "Wire this channel contract up to a deployed AMM/DEX contract.\\nIn single-owner mode (default), executes with 1 signature.\\nIn multi-sig mode, gated on reaching threshold approvals.",
       "name": "set_amm",
       "inputs": [
         {
@@ -330,6 +330,25 @@
   },
   {
     "function_v0": {
+      "doc": "An admin owner records their approval to set the AMM contract.",
+      "name": "propose_amm",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "amm",
+          "type_": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
       "doc": "Open a payment channel for an agent.\\nOwner deposits tokens and sets a per-period spend limit.\\n\\n# Arguments\\n* `owner` - Who is funding the channel\\n* `agent` - The AI agent authorized to spend\\n* `token` - Token contract address (USDC, XLM, etc.)\\n* `deposit` - Initial deposit amount\\n* `limit_per_period` - Max the agent can spend per period\\n* `period` - Reset period (Hourly, Daily, etc.)",
       "name": "open_channel",
       "inputs": [
@@ -520,6 +539,22 @@
   },
   {
     "function_v0": {
+      "doc": "",
+      "name": "get_amm_quorum",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "amm",
+          "type_": "address"
+        }
+      ],
+      "outputs": [
+        "u32"
+      ]
+    }
+  },
+  {
+    "function_v0": {
       "doc": "The close in flight for one recipient, if there is one.",
       "name": "get_settlement",
       "inputs": [
@@ -662,7 +697,7 @@
   },
   {
     "function_v0": {
-      "doc": "Admin-only: install (or rotate) the Groth16 verifying key used by\\n`verify_solvency_proof`. The first caller to set it becomes the\\nadmin for future rotations, mirroring `set_circuit_breaker`.",
+      "doc": "Admin-only: install (or rotate) the Groth16 verifying key used by\\n`verify_solvency_proof`.\\nIn single-owner mode (default), executes with 1 signature.\\nIn multi-sig mode, gated on reaching threshold approvals.",
       "name": "set_solvency_vk",
       "inputs": [
         {
@@ -803,7 +838,7 @@
   },
   {
     "function_v0": {
-      "doc": "Wire this channel contract up to a deployed `PriceOracle` contract,\\nused by `pay_with_conversion` as the trusted reference price for\\ncross-asset conversions. The first caller to set it becomes the\\nadmin for future rotations, mirroring `set_circuit_breaker`.",
+      "doc": "Wire this channel contract up to a deployed `PriceOracle` contract.\\nIn single-owner mode (default), executes with 1 signature.\\nIn multi-sig mode, gated on reaching threshold approvals.",
       "name": "set_price_oracle",
       "inputs": [
         {
@@ -862,6 +897,20 @@
   },
   {
     "function_v0": {
+      "doc": "",
+      "name": "get_multisig_owners",
+      "inputs": [],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": "address"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
       "doc": "Agent executes a payment where the recipient wants a different asset\\nthan the channel's settlement token (`channel.token`) \\xe2\\x80\\x94 e.g. the\\nchannel is funded in USDC but this recipient only accepts XLM.\\n\\n# Design: normalization stays in `channel.token`, not a new unit\\n\\n`amount` here is in `channel.token` units, exactly like `pay()`'s\\n`amount`. The spend limit (`limit_per_period` / `spent_this_period`)\\nis therefore *already* normalized: it's always measured in the one\\nasset this channel ever actually custodies (deposited at\\n`open_channel` / `top_up`), regardless of which asset the recipient\\nends up receiving. There's no need to invent a separate reference\\nunit for the ledger itself, and doing so would risk changing\\nsame-asset `pay()` behavior \\xe2\\x80\\x94 which must stay identical.\\n\\n# Design: what the price oracle is actually for\\n\\nWhat *isn't* automatically safe is the conversion itself. This\\ncontract calls out to a configured AMM (`set_amm`) to swap\\n`channel.token` -> `dest_token`. An AMM's on-chain quote can be\\nmanipulat",
       "name": "pay_with_conversion",
       "inputs": [
@@ -908,7 +957,30 @@
   },
   {
     "function_v0": {
-      "doc": "Wire this channel contract up to a deployed CircuitBreaker contract.\\nThe first caller to set it becomes the admin for future rotations.",
+      "doc": "An admin owner records their approval to set the Groth16 verifying key.",
+      "name": "propose_solvency_vk",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "vk",
+          "type_": {
+            "udt": {
+              "name": "SolvencyVerifyingKey"
+            }
+          }
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Wire this channel contract up to a deployed CircuitBreaker contract.\\nIn single-owner mode (default), executes with 1 signature.\\nIn multi-sig mode, gated on reaching threshold approvals.",
       "name": "set_circuit_breaker",
       "inputs": [
         {
@@ -919,6 +991,58 @@
         {
           "doc": "",
           "name": "circuit_breaker",
+          "type_": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Configure the multi-sig admin owners, threshold (k-of-n), and proposal\\nvalidity window (in ledgers). Modelled on CircuitBreaker's trusted nodes.\\n\\nSingle-owner mode is threshold = 1.",
+      "name": "set_multisig_config",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "caller",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "owners",
+          "type_": {
+            "vec": {
+              "element_type": "address"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "threshold",
+          "type_": "u32"
+        },
+        {
+          "doc": "",
+          "name": "propose_window_ledgers",
+          "type_": "u32"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "An admin owner records their approval to set the PriceOracle.",
+      "name": "propose_price_oracle",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "price_oracle",
           "type_": "address"
         }
       ],
@@ -963,6 +1087,16 @@
       ],
       "outputs": [
         "bool"
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "",
+      "name": "get_multisig_threshold",
+      "inputs": [],
+      "outputs": [
+        "u32"
       ]
     }
   },
@@ -1021,6 +1155,81 @@
             }
           }
         }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "",
+      "name": "get_price_oracle_quorum",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "price_oracle",
+          "type_": "address"
+        }
+      ],
+      "outputs": [
+        "u32"
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "An admin owner records their approval to set the CircuitBreaker.",
+      "name": "propose_circuit_breaker",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type_": "address"
+        },
+        {
+          "doc": "",
+          "name": "circuit_breaker",
+          "type_": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "An admin owner proposes rotating or configuring multi-sig owners and threshold.",
+      "name": "propose_multisig_config",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type_": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "",
+      "name": "get_circuit_breaker_quorum",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "circuit_breaker",
+          "type_": "address"
+        }
+      ],
+      "outputs": [
+        "u32"
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "",
+      "name": "get_multisig_propose_window",
+      "inputs": [],
+      "outputs": [
+        "u32"
       ]
     }
   }

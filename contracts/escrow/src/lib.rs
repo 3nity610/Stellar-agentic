@@ -86,7 +86,7 @@ impl Escrow {
         requester.require_auth();
         
         // --- Sentinel Guard ---
-        Self::validate_sentinel_guard(&amount)?; 
+        let _ = Self::validate_sentinel_guard(&amount); 
         
         if deadline_ledger <= env.ledger().sequence() { panic!("deadline must be in the future"); }
         let token_client = token::Client::new(&env, &token);
@@ -300,21 +300,135 @@ impl Escrow {
         );
     }
 
+    // ── Multisig Admin Quorum ────────────────────────────────────────────────
+
+    pub fn set_multisig_config(
+        env: Env,
+        caller: Address,
+        owners: Vec<Address>,
+        threshold: u32,
+        propose_window_ledgers: u32,
+    ) {
+        caller.require_auth();
+
+        if threshold == 0 {
+            panic!("threshold must be positive");
+        }
+        if threshold > owners.len() {
+            panic!("threshold cannot exceed owner count");
+        }
+        if propose_window_ledgers == 0 {
+            panic!("propose window must be positive");
+        }
+
+        let current_threshold = Self::get_multisig_threshold(env.clone());
+        let current_owners = Self::get_multisig_owners(env.clone());
+
+        if current_threshold > 1 && !current_owners.is_empty() {
+            if !current_owners.contains(&caller) {
+                panic!("not an admin owner");
+            }
+            let key = symbol_short!("prop_ms");
+            let proposals: Map<Address, u32> = env
+                .storage()
+                .instance()
+                .get(&key)
+                .unwrap_or(Map::new(&env));
+            let count = Self::count_valid_proposals(
+                &env,
+                &proposals,
+                &current_owners,
+                Self::get_multisig_propose_window(env.clone()),
+            );
+            if count < current_threshold {
+                panic!("quorum not reached");
+            }
+            env.storage().instance().remove(&key);
+        } else if !current_owners.is_empty() && !current_owners.contains(&caller) {
+            panic!("not an admin owner");
+        }
+
+        env.storage()
+            .instance()
+            .set(&symbol_short!("ms_own"), &owners);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("ms_thresh"), &threshold);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("ms_win"), &propose_window_ledgers);
+
+        env.events().publish(
+            (symbol_short!("admin"), symbol_short!("ms_cfg")),
+            (owners, threshold),
+        );
+    }
+
+    pub fn propose_circuit_breaker(env: Env, owner: Address, circuit_breaker: Address) {
+        owner.require_auth();
+        let owners = Self::get_multisig_owners(env.clone());
+        if !owners.contains(&owner) {
+            panic!("not an admin owner");
+        }
+
+        let key = (symbol_short!("cb"), circuit_breaker.clone());
+        let mut proposals: Map<Address, u32> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(Map::new(&env));
+        proposals.set(owner.clone(), env.ledger().sequence());
+        env.storage().instance().set(&key, &proposals);
+
+        env.events().publish(
+            (symbol_short!("admin"), symbol_short!("prop_cb")),
+            (owner, circuit_breaker),
+        );
+    }
+
     /// Wire this escrow contract up to a deployed CircuitBreaker contract.
-    /// The first caller to set it becomes the admin for future rotations.
+    /// In single-owner mode (default), executes with 1 signature.
+    /// In multi-sig mode, gated on reaching threshold approvals.
     pub fn set_circuit_breaker(env: Env, admin: Address, circuit_breaker: Address) {
         extend_instance_ttl(&env);
         admin.require_auth();
 
-        let admin_key = symbol_short!("cb_admin");
-        match env.storage().instance().get::<_, Address>(&admin_key) {
-            Some(stored_admin) => {
-                if stored_admin != admin {
-                    panic!("not the circuit breaker admin");
-                }
+        let owners = Self::get_multisig_owners(env.clone());
+        let threshold = Self::get_multisig_threshold(env.clone());
+
+        if !owners.is_empty() {
+            if !owners.contains(&admin) {
+                panic!("not an admin owner");
             }
-            None => {
-                env.storage().instance().set(&admin_key, &admin);
+            if threshold > 1 {
+                let key = (symbol_short!("cb"), circuit_breaker.clone());
+                let proposals: Map<Address, u32> = env
+                    .storage()
+                    .instance()
+                    .get(&key)
+                    .unwrap_or(Map::new(&env));
+                let count = Self::count_valid_proposals(
+                    &env,
+                    &proposals,
+                    &owners,
+                    Self::get_multisig_propose_window(env.clone()),
+                );
+                if count < threshold {
+                    panic!("quorum not reached");
+                }
+                env.storage().instance().remove(&key);
+            }
+        } else {
+            let admin_key = symbol_short!("cb_admin");
+            match env.storage().instance().get::<_, Address>(&admin_key) {
+                Some(stored_admin) => {
+                    if stored_admin != admin {
+                        panic!("not the circuit breaker admin");
+                    }
+                }
+                None => {
+                    env.storage().instance().set(&admin_key, &admin);
+                }
             }
         }
 
@@ -323,8 +437,60 @@ impl Escrow {
             .set(&symbol_short!("cb"), &circuit_breaker);
     }
 
-    pub fn get_job(env: Env, job_id: u64) -> Job { Self::load_job(&env, job_id) }
-    pub fn job_count(env: Env) -> u64 { env.storage().instance().get(&soroban_sdk::symbol_short!("count")).unwrap_or(0) }
+    pub fn get_multisig_owners(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("ms_own"))
+            .unwrap_or(Vec::new(&env))
+    }
+
+    pub fn get_multisig_threshold(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("ms_thresh"))
+            .unwrap_or(1)
+    }
+
+    pub fn get_multisig_propose_window(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("ms_win"))
+            .unwrap_or(17_280)
+    }
+
+    pub fn get_circuit_breaker_quorum(env: Env, circuit_breaker: Address) -> u32 {
+        let owners = Self::get_multisig_owners(env.clone());
+        let window = Self::get_multisig_propose_window(env.clone());
+        let key = (symbol_short!("cb"), circuit_breaker);
+        let proposals: Map<Address, u32> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .unwrap_or(Map::new(&env));
+        Self::count_valid_proposals(&env, &proposals, &owners, window)
+    }
+
+    fn count_valid_proposals(
+        env: &Env,
+        proposals: &Map<Address, u32>,
+        owners: &Vec<Address>,
+        window: u32,
+    ) -> u32 {
+        let current_ledger = env.ledger().sequence();
+        let cutoff = current_ledger.saturating_sub(window);
+
+        let mut count = 0u32;
+        for owner in owners.iter() {
+            if let Some(proposed_at) = proposals.get(owner) {
+                if proposed_at >= cutoff {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    // ── Queries ──────────────────────────────────────────────────────────────
 
     pub fn get_job(env: Env, job_id: u64) -> Job {
         extend_instance_ttl(&env);
@@ -340,6 +506,11 @@ impl Escrow {
     }
 
     // ── Internals ────────────────────────────────────────────────────────────
+
+    fn validate_sentinel_guard(amount: &i128) -> Result<(), u32> {
+        if *amount <= 0 { panic!("amount must be positive"); }
+        Ok(())
+    }
 
     fn next_id(env: &Env) -> u64 {
         let count: u64 = env.storage().instance().get(&soroban_sdk::symbol_short!("count")).unwrap_or(0);

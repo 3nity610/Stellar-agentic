@@ -39,6 +39,8 @@ dist-ssr/
 
 # Test output
 coverage/
+coverage-full/
+coverage.xml
 playwright-report/
 test-results/
 blob-report/
